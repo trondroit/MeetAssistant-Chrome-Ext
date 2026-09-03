@@ -1,84 +1,70 @@
-# 🎙 Meet Assistant Desktop
+# 🎙 Meet Assistant — Extensión de Chrome
 
-Asistente de reuniones con IA — funciona con **Zoom, Google Meet, Teams, cualquier app**.
+Asistente de reuniones con IA — funciona con **Zoom, Google Meet, Microsoft Teams y Webex** directamente en el navegador.
 
 ## Características
-- 🎤 Captura audio de todos los participantes (no solo tu micrófono)
-- 🌐 Detecta automáticamente el idioma (español, inglés, etc.)
-- 🤖 Genera comentarios con GPT-4o
-- 📋 Contexto por reunión (tema, tu perfil, notas)
-- 🔒 Panel flotante siempre visible, discreto
-- ⌨️ Atajos: `Alt+M` escuchar · `Alt+G` generar
+- 🎤 Captura el audio de **todos los participantes** directamente desde la pestaña de la reunión (sin drivers de audio virtuales — usa la API nativa de Chrome para compartir el audio de la pestaña)
+- 🌐 Detecta automáticamente el idioma (español, inglés, etc.) con Whisper
+- 🤖 Genera comentarios con GPT-4o, en el tono y longitud que elijas
+- 🌍 Traducción en vivo de la transcripción (a español o inglés)
+- ⚡ Modo automático: detecta silencios o preguntas directas y sugiere un comentario solo
+- 📋 Contexto por reunión (tema, tu perfil, notas) + perfil por defecto en Opciones
+- 📄 Resumen ejecutivo al final de la reunión, guardado en `Descargas/Meet Assistant/`
+- 🔒 Panel flotante y arrastrable, inyectado sobre la propia página de la reunión
+- ⌨️ Atajos: `Alt+M` escuchar · `Alt+G` generar · `Alt+S` resumen
 
 ---
 
-## Instalación
+## Instalación (modo desarrollador)
 
-### 1. Requisitos
-- **Node.js** 18+ → https://nodejs.org
-- **Cuenta OpenAI** con API Key → https://platform.openai.com/api-keys
-
-### 2. Instalar dependencias y ejecutar
-```bash
-npm install
-npm start
-```
-
----
-
-## Capturar audio de Zoom/Teams (todos los participantes)
-
-El micrófono por defecto solo captura tu voz. Para escuchar a todos necesitas
-un **driver de audio virtual** que "loopea" el audio del sistema:
-
-### macOS
-1. Instala **BlackHole 2ch** (gratuito): https://existential.audio/blackhole/
-2. Abre **Configuración de Sonido > Entrada** y selecciona BlackHole
-3. Crea un **Dispositivo Multi-Salida** en Audio MIDI Setup:
-   - Combina tus altavoces + BlackHole
-   - Úsalo como salida de audio del sistema
-4. En Meet Assistant, al presionar "Escuchar" selecciona BlackHole como entrada
-
-### Windows
-**Opción A — Stereo Mix (gratis, ya incluido en muchas tarjetas):**
-1. Clic derecho en el ícono de sonido > Sonidos > Grabación
-2. Clic derecho en área vacía > Mostrar dispositivos deshabilitados
-3. Habilita "Stereo Mix" y ponlo como predeterminado
-
-**Opción B — VB-Cable (gratuito):**
-1. Descarga VB-Cable: https://vb-audio.com/Cable/
-2. Instala y reinicia
-3. En Reproducción: selecciona "CABLE Input" como salida
-4. En Grabación: selecciona "CABLE Output" como entrada
+1. Consigue una API Key de OpenAI en [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+2. Abre `chrome://extensions` en Chrome (o Edge)
+3. Activa **"Modo de desarrollador"** (arriba a la derecha)
+4. Clic en **"Cargar descomprimida"** y selecciona esta carpeta
+5. Clic en el ícono 🎙 de la extensión → **⚙️ Configuración** → pega tu API Key y guarda
 
 ---
 
 ## Uso
 
-1. Abre la app → clic en ⚙️ para configurar tu OpenAI API Key
-2. (Opcional) Clic en el banner de contexto para describir la reunión y tu rol
-3. Únete a tu reunión en Zoom/Meet/Teams
-4. Presiona **🎙 Escuchar** en el panel
+1. Entra a tu reunión en Google Meet, Zoom (web), Teams o Webex
+2. El panel flotante 🎙 aparece automáticamente abajo a la derecha de la página
+3. Presiona **🎙 Escuchar reunión** — Chrome te pedirá compartir la pestaña:
+   activa la casilla **"Compartir audio de la pestaña"** y confirma
+4. (Opcional) Clic en el banner de contexto para describir la reunión y tu rol
 5. Cuando quieras comentar → **✨ Generar comentario** (o `Alt+G`)
 6. El comentario aparece listo para leer → **📋 Copiar**
+7. Al terminar, presiona **📄 Resumen final** para generar y guardar el acta de la reunión
+
+El botón **—** minimiza el panel a una burbuja 🎙; clic en la burbuja para volver a abrirlo.
+
+---
+
+## Cómo funciona la captura de audio
+
+A diferencia de la versión de escritorio (que necesitaba BlackHole/VB-Cable/Stereo Mix para
+"loopear" el audio del sistema), esta extensión usa la API `getDisplayMedia` de Chrome para
+capturar directamente el audio que reproduce la propia pestaña de la reunión — es decir, la voz
+de todos los demás participantes — sin instalar nada adicional. Tu propio micrófono no se graba
+(normalmente no se escucha a ti mismo en la pestaña), lo cual es justo lo que necesita el
+asistente para saber qué te están diciendo y sugerirte una respuesta.
 
 ---
 
 ## Estructura del proyecto
 ```
-meet-assistant-desktop/
-├── main.js              # Proceso principal Electron
-├── preload.js           # Bridge seguro IPC
-├── renderer.js          # Lógica del panel flotante
-├── settings-renderer.js # Lógica de configuración
-├── index.html           # Panel flotante UI
-├── settings.html        # Ventana de configuración
-└── package.json
+meet-assistant-chrome-ext/
+├── manifest.json      # Manifest V3
+├── background.js       # Service worker (guardar reuniones, abrir Opciones)
+├── content.js           # Panel flotante inyectado (Shadow DOM) + lógica de IA
+├── popup.html/.js       # Popup de la barra de herramientas
+├── options.html/.js     # Página de configuración (API Key, perfil, modelo)
+└── icons/                # Íconos de la extensión
 ```
 
 ---
 
 ## Notas de privacidad
-- Tu API Key se guarda localmente en tu computadora (nunca se envía a terceros)
-- El audio se envía directamente a OpenAI Whisper para transcripción
-- Nada pasa por servidores intermedios
+- Tu API Key se guarda solo en `chrome.storage.local` de tu navegador (nunca se envía a terceros)
+- El audio se envía directamente desde tu navegador a la API de OpenAI (Whisper) para transcripción
+- Nada pasa por servidores intermedios propios
