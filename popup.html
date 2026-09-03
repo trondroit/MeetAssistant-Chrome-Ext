@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Meet Assistant</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 280px;
+    font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+    background: #13131f;
+    color: #e0e0f0;
+    padding: 16px;
+    font-size: 13px;
+  }
+  .head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .head .emoji { font-size: 20px; }
+  .head h1 { font-size: 14px; font-weight: 600; color: #a5b4fc; }
+
+  .status { border-radius: 10px; padding: 10px 12px; font-size: 12px; line-height: 1.5; margin-bottom: 12px; }
+  .status.ok { background: rgba(74,222,128,.1); border: 1px solid rgba(74,222,128,.25); color: #86efac; }
+  .status.off { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08); color: #999; }
+  .status.warn { background: rgba(251,191,36,.1); border: 1px solid rgba(251,191,36,.25); color: #fbbf24; }
+
+  button { width: 100%; font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 9px; border-radius: 9px; border: none; cursor: pointer; margin-bottom: 8px; }
+  .btn-primary { background: linear-gradient(135deg,#6366f1,#8b5cf6); color: white; }
+  .btn-primary:hover { opacity: .9; }
+  .btn-secondary { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); color: #c0c0d8; }
+  .btn-secondary:hover { background: rgba(255,255,255,.12); }
+
+  .shortcuts { font-size: 11px; color: #555; text-align: center; margin-top: 6px; line-height: 1.6; }
+  .sites { font-size: 10.5px; color: #555; margin-top: 10px; line-height: 1.6; }
+  .sites b { color: #888; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <span class="emoji">🎙</span>
+    <h1>Meet Assistant</h1>
+  </div>
+
+  <div class="status" id="status-box">Comprobando esta pestaña...</div>
+
+  <button class="btn-secondary" id="btn-activate" style="display:none">🎯 Activar en esta página</button>
+  <button class="btn-primary" id="btn-options">⚙️ Configuración</button>
+
+  <div class="shortcuts">Alt+M escuchar · Alt+G generar · Alt+S resumen</div>
+  <div class="sites"><b>Sitios soportados:</b> Google Meet, Zoom, Microsoft Teams, Webex</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
