@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Configuración — Meet Assistant</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+    background: #13131f;
+    color: #e0e0f0;
+    padding: 28px 28px 20px;
+    font-size: 14px;
+    min-height: 100vh;
+  }
+
+  h1 { font-size: 18px; font-weight: 600; color: #a5b4fc; margin-bottom: 4px; }
+  .subtitle { font-size: 12px; color: #666; margin-bottom: 24px; }
+
+  .section { margin-bottom: 24px; }
+  .section-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: #555;
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(255,255,255,.07);
+  }
+
+  label { font-size: 12px; color: #999; display: block; margin-bottom: 5px; }
+
+  input[type="password"],
+  input[type="text"],
+  select,
+  textarea {
+    width: 100%;
+    background: #0d0d1a;
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 9px;
+    padding: 9px 12px;
+    color: #c0c0d8;
+    font-size: 13px;
+    font-family: inherit;
+    margin-bottom: 14px;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: #6366f1;
+  }
+  textarea { resize: vertical; min-height: 80px; }
+
+  .field { margin-bottom: 14px; }
+  .field label { margin-bottom: 5px; }
+  .field input, .field select, .field textarea { margin-bottom: 0; }
+
+  .hint { font-size: 11px; color: #555; margin-top: 4px; line-height: 1.5; }
+  .hint a { color: #6366f1; text-decoration: none; }
+
+  .row { display: flex; gap: 10px; }
+  .row .field { flex: 1; }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(255,255,255,.05);
+  }
+  .toggle-label { font-size: 13px; color: #c0c0d8; }
+  .toggle-desc { font-size: 11px; color: #666; margin-top: 2px; }
+
+  .toggle {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+  .toggle input { display: none; }
+  .slider {
+    position: absolute; inset: 0;
+    background: #333; border-radius: 22px; cursor: pointer;
+    transition: background .2s;
+  }
+  .slider::before {
+    content: '';
+    position: absolute;
+    width: 16px; height: 16px;
+    background: white; border-radius: 50%;
+    top: 3px; left: 3px;
+    transition: transform .2s;
+  }
+  input:checked + .slider { background: #6366f1; }
+  input:checked + .slider::before { transform: translateX(18px); }
+
+  .key-wrapper { position: relative; }
+  .key-wrapper input { padding-right: 70px; }
+  .show-key-btn {
+    position: absolute;
+    right: 10px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; color: #666;
+    font-size: 11px; cursor: pointer; padding: 4px 6px;
+    font-family: inherit;
+  }
+  .show-key-btn:hover { color: #c0c0d8; }
+
+  .save-btn {
+    width: 100%;
+    padding: 11px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    border: none;
+    border-radius: 10px;
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    margin-top: 8px;
+    transition: opacity .15s;
+  }
+  .save-btn:hover { opacity: .88; }
+
+  .info-box {
+    background: rgba(99,102,241,.1);
+    border: 1px solid rgba(99,102,241,.25);
+    border-radius: 9px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: #a5b4fc;
+    line-height: 1.6;
+    margin-bottom: 14px;
+  }
+  .info-box strong { color: #c4b5fd; }
+
+  .success-msg {
+    display: none;
+    background: rgba(16,163,127,.15);
+    border: 1px solid rgba(16,163,127,.3);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 12px;
+    color: #10a37f;
+    text-align: center;
+    margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+<h1>⚙️ Configuración</h1>
+<p class="subtitle">Meet Assistant — Whisper + GPT-4o</p>
+
+<!-- API -->
+<div class="section">
+  <div class="section-title">API Key</div>
+
+  <div class="field">
+    <label>OpenAI API Key <span style="color:#555">(Whisper + GPT-4o)</span></label>
+    <div class="key-wrapper">
+      <input type="password" id="openai-key" placeholder="sk-..." autocomplete="off" />
+      <button class="show-key-btn" id="toggle-key">mostrar</button>
+    </div>
+    <p class="hint">Obtén tu key en <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com/api-keys</a></p>
+  </div>
+</div>
+
+<!-- Model -->
+<div class="section">
+  <div class="section-title">Modelo de IA</div>
+  <div class="field">
+    <label>Modelo para generar comentarios</label>
+    <select id="model-sel">
+      <option value="gpt-4o">GPT-4o (recomendado — mejor calidad)</option>
+      <option value="gpt-4o-mini">GPT-4o Mini (más rápido y económico)</option>
+      <option value="gpt-4-turbo">GPT-4 Turbo</option>
+    </select>
+  </div>
+</div>
+
+<!-- Default context -->
+<div class="section">
+  <div class="section-title">Perfil por defecto</div>
+
+  <div class="info-box">
+    Este contexto se usa en <strong>todas las reuniones</strong>. Puedes sobreescribirlo por reunión desde el panel principal.
+  </div>
+
+  <div class="field">
+    <label>Tu nombre y rol</label>
+    <input type="text" id="default-name" placeholder="Ej: Carlos Mendoza, CTO en StartupXYZ" />
+  </div>
+
+  <div class="field">
+    <label>Tu perfil profesional / expertise</label>
+    <textarea id="default-profile" placeholder="Ej: Especialista en infraestructura cloud y arquitecturas escalables. 10 años de experiencia en SaaS B2B. Busco siempre proponer soluciones pragmáticas y orientadas a resultados."></textarea>
+  </div>
+
+  <div class="field">
+    <label>Instrucciones permanentes para el asistente</label>
+    <textarea id="default-instructions" placeholder="Ej: Siempre responde con un tono directo y ejecutivo. Evita tecnicismos innecesarios. Cuando sea posible, menciona métricas o números concretos." style="min-height:70px"></textarea>
+  </div>
+</div>
+
+<!-- Audio -->
+<div class="section">
+  <div class="section-title">Audio</div>
+
+  <div class="info-box">
+    <strong>Para capturar audio de Zoom/Teams/Meet:</strong><br>
+    • <strong>macOS:</strong> Instala <a href="https://existential.audio/blackhole/" style="color:#c4b5fd">BlackHole</a> o Loopback y selecciónalo como dispositivo de entrada<br>
+    • <strong>Windows:</strong> Activa "Stereo Mix" en configuración de sonido, o instala <a href="https://vb-audio.com/Cable/" style="color:#c4b5fd">VB-Cable</a>
+  </div>
+
+  <div class="toggle-row">
+    <div>
+      <div class="toggle-label">Autodetección de idioma</div>
+      <div class="toggle-desc">Whisper detecta automáticamente español/inglés y otros idiomas</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="auto-lang" checked />
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="toggle-row">
+    <div>
+      <div class="toggle-label">Limpiar transcripción al generar</div>
+      <div class="toggle-desc">Borra el texto acumulado después de generar un comentario</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="auto-clear" checked />
+      <span class="slider"></span>
+    </label>
+  </div>
+</div>
+
+<button class="save-btn" id="save-btn">💾 Guardar configuración</button>
+<div class="success-msg" id="success-msg">✓ Configuración guardada correctamente</div>
+
+<script src="settings-renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('electronAPI', {
+  loadConfig:             () => ipcRenderer.invoke('load-config'),
+  saveConfig:             (data) => ipcRenderer.invoke('save-config', data),
+  openSettings:           () => ipcRenderer.invoke('open-settings'),
+  closeSettings:          () => ipcRenderer.invoke('close-settings'),
+  quitApp:                () => ipcRenderer.invoke('quit-app'),
+  minimizeApp:            () => ipcRenderer.invoke('minimize-app'),
+  setAlwaysOnTop:         (v) => ipcRenderer.invoke('set-always-on-top', v),
+  saveSettings:           (data) => ipcRenderer.send('settings-saved', data),
+  onConfigUpdated:        (cb) => ipcRenderer.on('config-updated', (_, data) => cb(data)),
+  moveWindow:             (x, y) => ipcRenderer.send('window-move', { x, y }),
+  saveMeeting:            (filename, content) => ipcRenderer.invoke('save-meeting', { filename, content }),
+  openMeetingsFolder:     () => ipcRenderer.invoke('open-meetings-folder'),
+  onAutoSaveRequested:    (cb) => ipcRenderer.on('auto-save-requested', (_, data) => cb(data)),
+  getPlatform:            () => ipcRenderer.invoke('get-platform'),
+  openAudioSettings:      () => ipcRenderer.invoke('open-audio-settings'),
+  checkBlackhole:         () => ipcRenderer.invoke('check-blackhole'),
+  installBlackhole:       () => ipcRenderer.invoke('install-blackhole'),
+  installVBCableWin:      () => ipcRenderer.invoke('install-vbcable-win'),
+  enableStereomixWin:     () => ipcRenderer.invoke('enable-stereomix-win'),
+  listAudioInputs:        () => ipcRenderer.invoke('list-audio-inputs'),
+  switchAudioInput:       (name) => ipcRenderer.invoke('switch-audio-input', name),
+  installSwitchAudio:     () => ipcRenderer.invoke('install-switchaudio'),
+  setBlackholeAsDefault:  () => ipcRenderer.invoke('set-blackhole-as-default'),
+});
