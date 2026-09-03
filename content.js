@@ -1,9 +1,10 @@
 // Meet Assistant — Content script
 // Injects a floating panel (inside a Shadow DOM, isolated from the host page)
-// into Zoom / Google Meet / Teams / Webex tabs. Captures the tab's own audio
-// output (chrome tab-share, all participants) via getDisplayMedia — no
-// virtual audio driver needed — transcribes with Whisper and drafts comments
-// with GPT-4o.
+// into Zoom / Google Meet / Teams / Webex tabs. By default it reads the
+// meeting platform's own live captions (like Táctiq) — no share-this-tab
+// prompt, no audio permissions. A "🎙️ Audio de la pestaña" fallback mode
+// (getDisplayMedia + Whisper) is available for when captions aren't on.
+// Either way, GPT-4o drafts the comments.
 
 (function () {
   if (window.__meetAssistantInjected) return;
@@ -203,7 +204,7 @@
           <span id="lang-badge">—</span>
         </div>
         <div id="transcript-box">
-          <span class="placeholder-txt">Presiona "Escuchar" para capturar el audio...</span>
+          <span class="placeholder-txt">Presiona "Escuchar" para empezar a transcribir...</span>
         </div>
       </div>
 
@@ -212,8 +213,16 @@
         <div id="translation-box"></div>
       </div>
 
+      <div class="row-wrap">
+        <div class="row-label">Fuente de transcripción</div>
+        <div class="toggle-row">
+          <button class="tgl-btn" id="mode-captions">📝 Subtítulos</button>
+          <button class="tgl-btn" id="mode-audio">🎙️ Audio pestaña</button>
+        </div>
+      </div>
+
       <button id="listen-btn" class="idle">🎙 Escuchar reunión</button>
-      <div id="capture-hint">Chrome te pedirá compartir <strong>esta pestaña</strong> — activa la casilla "Compartir audio de la pestaña".</div>
+      <div id="capture-hint"></div>
 
       <div class="row-wrap">
         <div class="row-label">Traducción en tiempo real</div>
@@ -420,27 +429,45 @@
     }
 
     // ── Drag ─────────────────────────────────────────────────────────────
+    // NOTE: must measure rootEl (the actual fixed-position panel inside the
+    // shadow root), never `host` — host is a plain static <div> appended to
+    // <body> with no size/position of its own, so its rect doesn't match
+    // what's on screen and using it made the panel jump on every drag.
     (function enableDrag() {
       const header = $('header');
       let dragging = false, offX = 0, offY = 0;
+
+      function onMouseMove(e) {
+        if (!dragging) return;
+        const maxLeft = Math.max(0, window.innerWidth - rootEl.offsetWidth);
+        const maxTop = Math.max(0, window.innerHeight - rootEl.offsetHeight);
+        rootEl.style.left = Math.min(Math.max(0, e.clientX - offX), maxLeft) + 'px';
+        rootEl.style.top = Math.min(Math.max(0, e.clientY - offY), maxTop) + 'px';
+      }
+      function onMouseUp() {
+        if (!dragging) return;
+        dragging = false;
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      }
       header.addEventListener('mousedown', e => {
         if (e.target.closest('.hbtn')) return;
-        dragging = true;
-        const rect = host.getBoundingClientRect();
+        const rect = rootEl.getBoundingClientRect();
+        // Switch from the initial bottom/right anchoring to left/top at the
+        // panel's current on-screen position, then track the cursor from there.
+        rootEl.style.left = rect.left + 'px';
+        rootEl.style.top = rect.top + 'px';
+        rootEl.style.right = 'auto';
+        rootEl.style.bottom = 'auto';
         offX = e.clientX - rect.left;
         offY = e.clientY - rect.top;
+        dragging = true;
+        document.body.style.userSelect = 'none';
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
         e.preventDefault();
       });
-      document.addEventListener('mousemove', e => {
-        if (!dragging) return;
-        const root = rootEl;
-        root.style.position = 'fixed';
-        root.style.left = Math.max(0, e.clientX - offX) + 'px';
-        root.style.top = Math.max(0, e.clientY - offY) + 'px';
-        root.style.right = 'auto';
-        root.style.bottom = 'auto';
-      });
-      document.addEventListener('mouseup', () => { dragging = false; });
     })();
 
     // ── Context modal ────────────────────────────────────────────────────
@@ -544,10 +571,145 @@
       });
     });
 
-    // ── Audio capture (tab audio via getDisplayMedia) ───────────────────
+    // ── Capture mode: captions (default, like Táctiq) vs tab audio ──────
+    let captureMode = config.captureMode === 'audio' ? 'audio' : 'captions';
+
+    function setCaptureMode(mode) {
+      if (isListening) return; // don't swap sources mid-meeting
+      captureMode = mode;
+      saveConfig({ captureMode: mode });
+      $('mode-captions').className = 'tgl-btn' + (mode === 'captions' ? ' active teal' : '');
+      $('mode-audio').className = 'tgl-btn' + (mode === 'audio' ? ' active' : '');
+      updateCaptureHint();
+    }
+    function updateCaptureHint() {
+      if (isListening) return;
+      const hint = $('capture-hint');
+      hint.style.display = '';
+      hint.textContent = captureMode === 'captions'
+        ? 'Activa los subtítulos en vivo de la reunión (botón "CC") antes de presionar Escuchar — sin permisos ni ventanas emergentes.'
+        : 'Chrome te pedirá compartir esta pestaña — activa la casilla "Compartir audio de la pestaña".';
+    }
+    $('mode-captions').addEventListener('click', () => setCaptureMode('captions'));
+    $('mode-audio').addEventListener('click', () => setCaptureMode('audio'));
+    setCaptureMode(captureMode);
+
+    // ── Captions engine ───────────────────────────────────────────────────
+    // Reads the platform's own live-captions live region (an aria-live area
+    // required for accessibility on Meet/Zoom/Teams/Webex) instead of
+    // capturing audio — this is how Táctiq-style extensions work: no
+    // share-tab prompt, no audio permission, and it's the platform's own
+    // (usually very accurate) speech recognition doing the work.
+    let captionsObserver = null;
+    let captionsPollTimer = null;
+    let captionsRegion = null;
+    const captionSeen = new WeakMap();
+    const CAPTION_STABLE_MS = 1100;
+
+    function findCaptionsRegion() {
+      const candidates = Array.from(document.querySelectorAll('[aria-live="polite"], [aria-live="assertive"]'))
+        .filter(el => !host.contains(el))
+        .filter(el => el.getClientRects().length > 0);
+      if (!candidates.length) return null;
+      candidates.sort((a, b) => (b.textContent || '').trim().length - (a.textContent || '').trim().length);
+      return candidates[0];
+    }
+
+    function commitCaptionNode(node) {
+      if (!isListening || captureMode !== 'captions') return; // stopped/switched before this line stabilized
+      const entry = captionSeen.get(node);
+      if (!entry || entry.committed) return;
+      entry.committed = true;
+      const text = entry.text.trim();
+      if (text) handleCapturedText(text);
+    }
+
+    function trackCaptionLeaf(node) {
+      const text = node.textContent || '';
+      if (!text.trim()) return;
+      let entry = captionSeen.get(node);
+      if (!entry) { entry = { text, committed: false, timer: null }; captionSeen.set(node, entry); }
+      else if (entry.text !== text) { entry.text = text; entry.committed = false; }
+      clearTimeout(entry.timer);
+      entry.timer = setTimeout(() => commitCaptionNode(node), CAPTION_STABLE_MS);
+    }
+
+    function walkCaptionLeaves(node) {
+      if (!node || node.nodeType !== 1) return;
+      const children = Array.from(node.children || []);
+      if (children.length === 0) trackCaptionLeaf(node);
+      else children.forEach(walkCaptionLeaves);
+    }
+
+    function flushRemovedCaptionNodes(node) {
+      if (!node || node.nodeType !== 1) return;
+      if (captionSeen.has(node)) commitCaptionNode(node);
+      (node.querySelectorAll ? Array.from(node.querySelectorAll('*')) : []).forEach(el => {
+        if (captionSeen.has(el)) commitCaptionNode(el);
+      });
+    }
+
+    function handleCapturedText(text) {
+      appendTranscript(text);
+      if (translationMode !== 'off') translateText(text);
+    }
+
+    function attachCaptionsObserver(region) {
+      if (captionsObserver) captionsObserver.disconnect();
+      captionsRegion = region;
+      walkCaptionLeaves(region);
+      captionsObserver = new MutationObserver(mutations => {
+        walkCaptionLeaves(captionsRegion);
+        mutations.forEach(m => m.removedNodes.forEach(flushRemovedCaptionNodes));
+      });
+      captionsObserver.observe(region, { childList: true, subtree: true, characterData: true });
+    }
+
+    function recheckCaptionsRegion() {
+      if (!isListening || captureMode !== 'captions') return;
+      const best = findCaptionsRegion();
+      if (best && best !== captionsRegion) attachCaptionsObserver(best);
+      captionsPollTimer = setTimeout(recheckCaptionsRegion, 3000);
+    }
+
+    function startCaptionsWatch() {
+      const region = findCaptionsRegion();
+      if (!region) {
+        $('capture-hint').style.display = '';
+        $('capture-hint').textContent = 'No detecto subtítulos activos todavía. Actívalos en la reunión — Meet: ícono "CC" · Zoom: "Mostrar subtítulos" · Teams: menú "…" → Subtítulos en vivo — esto se conecta solo en cuanto aparezcan.';
+        setStatus('Buscando subtítulos activados...');
+        captionsPollTimer = setTimeout(() => { if (isListening) startCaptionsWatch(); }, 2000);
+        return;
+      }
+      attachCaptionsObserver(region);
+      $('capture-hint').style.display = 'none';
+      setStatus('Escuchando los subtítulos de la reunión...');
+      captionsPollTimer = setTimeout(recheckCaptionsRegion, 3000);
+    }
+
+    function stopCaptionsWatch() {
+      if (captionsObserver) { captionsObserver.disconnect(); captionsObserver = null; }
+      if (captionsPollTimer) { clearTimeout(captionsPollTimer); captionsPollTimer = null; }
+      captionsRegion = null;
+    }
+
+    // ── Listen button ────────────────────────────────────────────────────
     $('listen-btn').addEventListener('click', () => { if (isListening) stopListening(); else startListening(); });
 
     async function startListening() {
+      if (captureMode === 'captions') {
+        isListening = true;
+        if (!meetingStartTime) { meetingStartTime = new Date(); meetingLog = []; logEvent('system', '▶ Reunión iniciada'); }
+        $('listen-btn').className = 'active';
+        $('listen-btn').textContent = '⏹ Detener';
+        $('status-dot').className = 'status-dot listening';
+        $('bubble-dot').className = 'dot listening';
+        $('transcript-box').innerHTML = '';
+        startCaptionsWatch();
+        return;
+      }
+
+      // ── Fallback: tab audio via getDisplayMedia + Whisper ─────────────
       try {
         setStatus('Solicitando compartir la pestaña...');
         const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -600,6 +762,7 @@
 
     function stopListening() {
       isListening = false;
+      stopCaptionsWatch();
       try { if (mediaRecorder?.state !== 'inactive') mediaRecorder.stop(); } catch (e) {}
       mediaRecorder = null; audioChunks = [];
       if (captureStream) { captureStream.getTracks().forEach(t => t.stop()); captureStream = null; }
@@ -609,6 +772,7 @@
       $('bubble-dot').className = 'dot';
       logEvent('system', '⏸ Pausa');
       setStatus('Listo');
+      updateCaptureHint();
     }
 
     // ── Whisper ──────────────────────────────────────────────────────────
@@ -790,7 +954,7 @@ Respond in ${lang}.${ctxBlock}`;
       $('comment-actions').style.display = 'none';
       currentTranscript = '';
       lastComment = '';
-      $('transcript-box').innerHTML = '<span class="placeholder-txt">Presiona "Escuchar" para capturar el audio...</span>';
+      $('transcript-box').innerHTML = '<span class="placeholder-txt">Presiona "Escuchar" para empezar a transcribir...</span>';
       $('translation-box').textContent = '';
       $('gen-btn').disabled = true;
       $('lang-badge').textContent = '—';
@@ -811,7 +975,7 @@ Respond in ${lang}.${ctxBlock}`;
     $('summary-new').addEventListener('click', () => {
       if (!confirm('¿Iniciar nueva reunión? Se borrará el historial actual.')) return;
       meetingLog = []; currentTranscript = ''; meetingStartTime = null; lastComment = '';
-      $('transcript-box').innerHTML = '<span class="placeholder-txt">Presiona "Escuchar" para capturar el audio...</span>';
+      $('transcript-box').innerHTML = '<span class="placeholder-txt">Presiona "Escuchar" para empezar a transcribir...</span>';
       $('translation-box').textContent = '';
       $('comment-feed').innerHTML = '';
       $('comment-actions').style.display = 'none';
