@@ -3,7 +3,6 @@
   "name": "Meet Assistant — Asistente de reuniones IA",
   "version": "2.0.0",
   "description": "Panel flotante con IA para Zoom, Google Meet y Teams: transcribe, traduce y sugiere comentarios en vivo con Whisper + GPT-4o.",
-  "default_locale": "es",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
