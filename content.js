@@ -603,16 +603,41 @@
     let captionsObserver = null;
     let captionsPollTimer = null;
     let captionsRegion = null;
-    const captionSeen = new WeakMap();
+    let captionSeen = new WeakMap();
+    let candidateActivity = new WeakMap(); // el -> { lastText, changes } — see findCaptionsRegion()
     const CAPTION_STABLE_MS = 1100;
 
+    // Picking "whichever aria-live region has the most text right now" picks
+    // the WRONG element on Meet: one-off info toasts ("te uniste como...",
+    // "se activaron los subtítulos") are also aria-live regions, and their
+    // static boilerplate text is often longer than the couple of lines a live
+    // caption strip shows at any instant — so that heuristic gets stuck on
+    // the toast forever. Instead, score every candidate by how many times its
+    // text has actually CHANGED since we started watching: real captions
+    // update continuously while someone talks, a toast is set once and never
+    // changes again. Only fall back to "most text" while nothing has changed
+    // yet (e.g. right at the very start, before anyone has spoken).
     function findCaptionsRegion() {
       const candidates = Array.from(document.querySelectorAll('[aria-live="polite"], [aria-live="assertive"]'))
         .filter(el => !host.contains(el))
         .filter(el => el.getClientRects().length > 0);
       if (!candidates.length) return null;
-      candidates.sort((a, b) => (b.textContent || '').trim().length - (a.textContent || '').trim().length);
-      return candidates[0];
+
+      const scored = candidates.map(el => {
+        const text = (el.textContent || '').trim();
+        let activity = candidateActivity.get(el);
+        if (!activity) {
+          activity = { lastText: text, changes: 0 };
+          candidateActivity.set(el, activity);
+        } else if (activity.lastText !== text) {
+          activity.changes++;
+          activity.lastText = text;
+        }
+        return { el, changes: activity.changes, length: text.length };
+      });
+
+      scored.sort((a, b) => (b.changes - a.changes) || (b.length - a.length));
+      return scored[0].el;
     }
 
     function commitCaptionNode(node) {
@@ -668,27 +693,41 @@
     function recheckCaptionsRegion() {
       if (!isListening || captureMode !== 'captions') return;
       const best = findCaptionsRegion();
-      if (best && best !== captionsRegion) attachCaptionsObserver(best);
-      captionsPollTimer = setTimeout(recheckCaptionsRegion, 3000);
+      if (best && best !== captionsRegion) {
+        console.debug('[Meet Assistant] switching captions region ->', best);
+        attachCaptionsObserver(best);
+      }
+      captionsPollTimer = setTimeout(recheckCaptionsRegion, 2000);
     }
 
     function startCaptionsWatch() {
-      const region = findCaptionsRegion();
-      if (!region) {
-        $('capture-hint').style.display = '';
-        $('capture-hint').textContent = 'No detecto subtítulos activos todavía. Actívalos en la reunión — Meet: ícono "CC" · Zoom: "Mostrar subtítulos" · Teams: menú "…" → Subtítulos en vivo — esto se conecta solo en cuanto aparezcan.';
-        setStatus('Buscando subtítulos activados...');
-        captionsPollTimer = setTimeout(() => { if (isListening) startCaptionsWatch(); }, 2000);
-        return;
-      }
-      attachCaptionsObserver(region);
-      $('capture-hint').style.display = 'none';
-      setStatus('Escuchando los subtítulos de la reunión...');
-      captionsPollTimer = setTimeout(recheckCaptionsRegion, 3000);
+      // Prime the activity scores for a moment before committing to a region —
+      // gives an already-updating real captions region a chance to reveal
+      // itself instead of locking onto whatever merely has the most static
+      // text right this instant (see findCaptionsRegion for why that matters).
+      findCaptionsRegion();
+      captionsPollTimer = setTimeout(() => {
+        if (!isListening || captureMode !== 'captions') return;
+        const region = findCaptionsRegion();
+        if (!region) {
+          $('capture-hint').style.display = '';
+          $('capture-hint').textContent = 'No detecto subtítulos activos todavía. Actívalos en la reunión — Meet: ícono "CC" · Zoom: "Mostrar subtítulos" · Teams: menú "…" → Subtítulos en vivo — esto se conecta solo en cuanto aparezcan.';
+          setStatus('Buscando subtítulos activados...');
+          captionsPollTimer = setTimeout(() => { if (isListening) startCaptionsWatch(); }, 2000);
+          return;
+        }
+        console.debug('[Meet Assistant] captions region ->', region);
+        attachCaptionsObserver(region);
+        $('capture-hint').style.display = 'none';
+        setStatus('Escuchando los subtítulos de la reunión...');
+        captionsPollTimer = setTimeout(recheckCaptionsRegion, 2000);
+      }, 1500);
     }
 
     function stopCaptionsWatch() {
       if (captionsObserver) { captionsObserver.disconnect(); captionsObserver = null; }
+      candidateActivity = new WeakMap();
+      captionSeen = new WeakMap();
       if (captionsPollTimer) { clearTimeout(captionsPollTimer); captionsPollTimer = null; }
       captionsRegion = null;
     }
