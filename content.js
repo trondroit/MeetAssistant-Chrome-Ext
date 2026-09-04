@@ -641,10 +641,39 @@
     // update continuously while someone talks, a toast is set once and never
     // changes again. Only fall back to "most text" while nothing has changed
     // yet (e.g. right at the very start, before anyone has spoken).
+    // Meet (and apparently others) exposes several unrelated aria-live
+    // regions besides the actual captions: join/leave toasts, "se activaron
+    // los subtítulos", and — confirmed by testing — chat message
+    // announcements ("Fulano dice en el chat: <mensaje>"). These are
+    // legitimate accessibility regions too, and they DO change over time
+    // (new chat messages, repeated join/leave events), so the "most changed"
+    // heuristic alone isn't enough to rule them out. Recognize and exclude
+    // these known system-announcement patterns outright.
+    const CAPTION_BLOCKLIST_PATTERNS = [
+      /dice en el chat/i,
+      /says? in the chat/i,
+      /se activ(ó|aron) (el|los) subt[ií]tulo/i,
+      /subtitles? (were|have been|turned) (on|off)/i,
+      /las personas que usen este v[ií]nculo/i,
+      /people who use this meeting link/i,
+      /se uni[oó] a (la llamada|esta llamada|la reuni[oó]n)/i,
+      /joined the (call|meeting)/i,
+      /sali[oó] de la (llamada|reuni[oó]n)/i,
+      /left the (call|meeting)/i,
+      /https?:\/\//i, // toasts/chat links almost always contain a URL; spoken captions basically never do
+    ];
+
+    function looksLikeSystemMessage(text) {
+      return CAPTION_BLOCKLIST_PATTERNS.some(re => re.test(text));
+    }
+
     function findCaptionsRegion() {
-      const candidates = Array.from(document.querySelectorAll('[aria-live="polite"], [aria-live="assertive"]'))
+      const candidates = Array.from(document.querySelectorAll(
+        '[aria-live="polite"], [aria-live="assertive"], [role="log"], [role="status"]'
+      ))
         .filter(el => !host.contains(el))
-        .filter(el => el.getClientRects().length > 0);
+        .filter(el => el.getClientRects().length > 0)
+        .filter(el => !looksLikeSystemMessage(el.textContent || ''));
       if (!candidates.length) return null;
 
       const scored = candidates.map(el => {
@@ -670,7 +699,7 @@
       if (!entry || entry.committed) return;
       entry.committed = true;
       const text = entry.text.trim();
-      if (text) handleCapturedText(text);
+      if (text && !looksLikeSystemMessage(text)) handleCapturedText(text);
     }
 
     function trackCaptionLeaf(node) {
@@ -718,7 +747,7 @@
       if (!isListening || captureMode !== 'captions') return;
       const best = findCaptionsRegion();
       if (best && best !== captionsRegion) {
-        console.debug('[Meet Assistant] switching captions region ->', best);
+        console.debug('[Meet Assistant] switching captions region ->', best, JSON.stringify((best.textContent || '').trim().slice(0, 120)));
         attachCaptionsObserver(best);
       }
       captionsPollTimer = setTimeout(recheckCaptionsRegion, 2000);
@@ -740,7 +769,7 @@
           captionsPollTimer = setTimeout(() => { if (isListening) startCaptionsWatch(); }, 2000);
           return;
         }
-        console.debug('[Meet Assistant] captions region ->', region);
+        console.debug('[Meet Assistant] captions region ->', region, JSON.stringify((region.textContent || '').trim().slice(0, 120)));
         attachCaptionsObserver(region);
         $('capture-hint').style.display = 'none';
         setStatus('Escuchando los subtítulos de la reunión...');
