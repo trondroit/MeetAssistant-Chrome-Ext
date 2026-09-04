@@ -667,7 +667,31 @@
       return CAPTION_BLOCKLIST_PATTERNS.some(re => re.test(text));
     }
 
+    // Known, platform-specific selectors for the real captions container —
+    // checked before falling back to the generic aria-live heuristic below.
+    // For Google Meet this is confirmed straight from Meet's own DOM: `.a4cQT`
+    // is the captions panel and `.iOzk7` the scrolling text region inside it
+    // — confirmed because Tactiq's own injected stylesheet has a rule
+    // `.tactiq-nocc .a4cQT { color: transparent !important }` to visually
+    // hide Meet's native captions while its own overlay is showing, i.e. a
+    // competing extension relies on this exact class staying stable.
+    const KNOWN_CAPTIONS_SELECTORS = [
+      '.a4cQT .iOzk7',
+      '.a4cQT',
+    ];
+
+    function findKnownCaptionsRegion() {
+      for (const sel of KNOWN_CAPTIONS_SELECTORS) {
+        const el = document.querySelector(sel);
+        if (el && !host.contains(el) && el.getClientRects().length > 0) return el;
+      }
+      return null;
+    }
+
     function findCaptionsRegion() {
+      const known = findKnownCaptionsRegion();
+      if (known) return known;
+
       const candidates = Array.from(document.querySelectorAll(
         '[aria-live="polite"], [aria-live="assertive"], [role="log"], [role="status"]'
       ))
