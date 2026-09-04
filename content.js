@@ -611,7 +611,7 @@
       const hint = $('capture-hint');
       hint.style.display = '';
       hint.textContent = captureMode === 'captions'
-        ? 'Activa los subtítulos en vivo de la reunión (botón "CC") antes de presionar Escuchar — sin permisos ni ventanas emergentes.'
+        ? 'En Google Meet activamos y ocultamos los subtítulos por ti al presionar Escuchar. En Zoom/Teams/Webex actívalos tú (botón "CC") antes de escuchar.'
         : 'Chrome te pedirá compartir esta pestaña — activa la casilla "Compartir audio de la pestaña".';
     }
     $('mode-captions').addEventListener('click', () => setCaptureMode('captions'));
@@ -675,9 +675,10 @@
     // `.tactiq-nocc .a4cQT { color: transparent !important }` to visually
     // hide Meet's native captions while its own overlay is showing, i.e. a
     // competing extension relies on this exact class staying stable.
+    const MEET_CAPTIONS_CONTAINER_SELECTOR = '.a4cQT';
     const KNOWN_CAPTIONS_SELECTORS = [
-      '.a4cQT .iOzk7',
-      '.a4cQT',
+      `${MEET_CAPTIONS_CONTAINER_SELECTOR} .iOzk7`,
+      MEET_CAPTIONS_CONTAINER_SELECTOR,
     ];
 
     function findKnownCaptionsRegion() {
@@ -715,6 +716,74 @@
 
       scored.sort((a, b) => (b.changes - a.changes) || (b.length - a.length));
       return scored[0].el;
+    }
+
+    // ── Auto-enable + hide + lock Meet's native captions ─────────────────
+    // The captions engine needs Meet's own captions turned on to have
+    // anything to read — but the user doesn't want to see that on-screen
+    // caption box, and doesn't want to risk turning it off by accident
+    // (same behavior Tactiq has). So: turn it on for them, hide it visually
+    // with injected CSS (MutationObserver keeps working on hidden elements —
+    // hiding is purely visual), and swallow clicks on the toggle button
+    // while we're listening.
+    let captionsHideStyleEl = null;
+    const lockedCaptionButtons = new WeakSet();
+
+    function findMeetCaptionsToggleButton() {
+      const buttons = Array.from(document.querySelectorAll('button[aria-label], [role="button"][aria-label]'));
+      return buttons.find(b => {
+        if (host.contains(b)) return false;
+        const label = (b.getAttribute('aria-label') || '').toLowerCase();
+        return label.includes('subt') || label.includes('caption');
+      }) || null;
+    }
+
+    function captionsAppearOn() {
+      return !!document.querySelector(MEET_CAPTIONS_CONTAINER_SELECTOR);
+    }
+
+    let lastCaptionsClickAt = 0;
+    function ensureMeetCaptionsOn() {
+      if (captionsAppearOn()) return;
+      // Rate-limit: if aria-pressed isn't reliable and .a4cQT just hasn't
+      // rendered yet, retrying on every 2s recheck could double-click the
+      // button and toggle captions back off. Give it a few seconds to catch up.
+      if (Date.now() - lastCaptionsClickAt < 5000) return;
+      const btn = findMeetCaptionsToggleButton();
+      if (!btn || btn.getAttribute('aria-pressed') === 'true' || btn.disabled) return;
+      lastCaptionsClickAt = Date.now();
+      btn.click();
+    }
+
+    function hideVisibleCaptions(hide) {
+      if (hide) {
+        if (captionsHideStyleEl) return;
+        captionsHideStyleEl = document.createElement('style');
+        captionsHideStyleEl.textContent = `${MEET_CAPTIONS_CONTAINER_SELECTOR} { opacity: 0 !important; pointer-events: none !important; }`;
+        document.head.appendChild(captionsHideStyleEl);
+      } else if (captionsHideStyleEl) {
+        captionsHideStyleEl.remove();
+        captionsHideStyleEl = null;
+      }
+    }
+
+    function blockCaptionToggleClick(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setStatus('Los subtítulos están bloqueados mientras Meet Assistant escucha — presiona "Detener" para soltarlos');
+    }
+
+    function lockCaptionsToggleButton(lock) {
+      const btn = findMeetCaptionsToggleButton();
+      if (!btn) return;
+      if (lock) {
+        if (lockedCaptionButtons.has(btn)) return;
+        btn.addEventListener('click', blockCaptionToggleClick, true);
+        lockedCaptionButtons.add(btn);
+      } else if (lockedCaptionButtons.has(btn)) {
+        btn.removeEventListener('click', blockCaptionToggleClick, true);
+        lockedCaptionButtons.delete(btn);
+      }
     }
 
     function commitCaptionNode(node) {
@@ -769,6 +838,8 @@
 
     function recheckCaptionsRegion() {
       if (!isListening || captureMode !== 'captions') return;
+      ensureMeetCaptionsOn(); // self-heal if it somehow got toggled off (e.g. keyboard shortcut)
+      lockCaptionsToggleButton(true); // re-attach in case Meet re-rendered the button
       const best = findCaptionsRegion();
       if (best && best !== captionsRegion) {
         console.debug('[Meet Assistant] switching captions region ->', best, JSON.stringify((best.textContent || '').trim().slice(0, 120)));
@@ -778,6 +849,7 @@
     }
 
     function startCaptionsWatch() {
+      ensureMeetCaptionsOn();
       // Prime the activity scores for a moment before committing to a region —
       // gives an already-updating real captions region a chance to reveal
       // itself instead of locking onto whatever merely has the most static
@@ -795,6 +867,8 @@
         }
         console.debug('[Meet Assistant] captions region ->', region, JSON.stringify((region.textContent || '').trim().slice(0, 120)));
         attachCaptionsObserver(region);
+        hideVisibleCaptions(true);
+        lockCaptionsToggleButton(true);
         $('capture-hint').style.display = 'none';
         setStatus('Escuchando los subtítulos de la reunión...');
         captionsPollTimer = setTimeout(recheckCaptionsRegion, 2000);
@@ -807,6 +881,8 @@
       captionSeen = new WeakMap();
       if (captionsPollTimer) { clearTimeout(captionsPollTimer); captionsPollTimer = null; }
       captionsRegion = null;
+      hideVisibleCaptions(false);
+      lockCaptionsToggleButton(false);
     }
 
     // ── Listen button ────────────────────────────────────────────────────
