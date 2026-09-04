@@ -116,9 +116,20 @@
   .act-btn { flex: 1; padding: 7px; border-radius: 8px; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.05); color: #c0c0d8; font-size: 11px; cursor: pointer; font-family: inherit; font-weight: 500; transition: background .15s; }
   .act-btn:hover { background: rgba(255,255,255,.12); color: white; }
 
-  #btn-summary { width: 100%; padding: 9px 14px; background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.25); border-radius: 10px; color: #fbbf24; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; display: flex; align-items: center; justify-content: center; gap: 7px; transition: background .15s; }
+  #save-row { display: flex; gap: 6px; }
+  #btn-save { flex: 1; padding: 9px 10px; background: rgba(16,163,127,0.1); border: 1px solid rgba(16,163,127,0.25); border-radius: 10px; color: #10a37f; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; display: flex; align-items: center; justify-content: center; gap: 6px; transition: background .15s; }
+  #btn-save:hover { background: rgba(16,163,127,0.2); }
+  #btn-save:disabled { opacity: .35; cursor: not-allowed; }
+  #btn-summary { flex: 1.4; padding: 9px 14px; background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.25); border-radius: 10px; color: #fbbf24; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; display: flex; align-items: center; justify-content: center; gap: 7px; transition: background .15s; }
   #btn-summary:hover { background: rgba(251,191,36,0.2); }
   #btn-summary:disabled { opacity: .35; cursor: not-allowed; }
+
+  #recovery-banner { display: none; align-items: center; justify-content: space-between; gap: 8px; background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.3); border-radius: 10px; padding: 8px 10px; font-size: 11px; color: #fbbf24; flex-wrap: wrap; }
+  #recovery-banner.visible { display: flex; }
+  .recovery-actions { display: flex; gap: 6px; }
+  .recovery-actions button { padding: 5px 9px; border-radius: 7px; border: 1px solid rgba(251,191,36,.3); background: rgba(251,191,36,.15); color: #fbbf24; font-size: 10.5px; cursor: pointer; font-family: inherit; font-weight: 600; }
+  .recovery-actions button:hover { background: rgba(251,191,36,.28); }
+  .recovery-actions #recovery-dismiss { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.12); color: #999; }
 
   #footer { padding: 4px 13px 8px; font-size: 11px; color: #555; text-align: center; flex-shrink: 0; }
   #footer.error #status-text { color: #f87171; }
@@ -192,6 +203,14 @@
     </div>
 
     <div id="body">
+
+      <div id="recovery-banner">
+        <span>⚠️ Hay una reunión sin guardar de antes</span>
+        <div class="recovery-actions">
+          <button id="recovery-download">💾 Descargar</button>
+          <button id="recovery-dismiss">Descartar</button>
+        </div>
+      </div>
 
       <div id="context-bar" title="Clic para editar contexto">
         <span id="context-icon">📋</span>
@@ -293,7 +312,10 @@
         </div>
       </div>
 
-      <button id="btn-summary" disabled>📄 Resumen final <kbd style="font-size:10px;opacity:.5">Alt+S</kbd></button>
+      <div id="save-row">
+        <button id="btn-save" disabled>💾 Guardar</button>
+        <button id="btn-summary" disabled>📄 Resumen final <kbd style="font-size:10px;opacity:.5">Alt+S</kbd></button>
+      </div>
 
     </div>
 
@@ -374,6 +396,7 @@
     let detectedLang = null;
     let context = { topic: '', profile: '', notes: '' };
     let meetingStartTime = null;
+    let meetingFileName = null; // stable per meeting, so repeat saves overwrite instead of piling up
     let selectedLength = 'medium';
     let autoMode = false;
     let silenceTimer = null;
@@ -405,6 +428,7 @@
       $('body').style.display = hasKey ? 'flex' : 'none';
       $('footer').style.display = hasKey ? '' : 'none';
       if (config.context) { context = config.context; updateContextBar(); }
+      if (hasKey) checkForRecoverableMeeting();
     }
     init();
 
@@ -417,8 +441,8 @@
     });
 
     // ── Header ───────────────────────────────────────────────────────────
-    $('btn-setup').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'open-options' }));
-    $('btn-settings').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'open-options' }));
+    $('btn-setup').addEventListener('click', () => safeSendMessage({ type: 'open-options' }));
+    $('btn-settings').addEventListener('click', () => safeSendMessage({ type: 'open-options' }));
     $('btn-min').addEventListener('click', () => setMinimized(true));
     $('bubble').addEventListener('click', () => setMinimized(false));
 
@@ -887,6 +911,75 @@
       const time = new Date().toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' });
       meetingLog.push({ time, type, text });
       updateSummaryBtn();
+      cacheMeetingToStorage();
+    }
+
+    // Keeps a copy in chrome.storage.local as the meeting goes — cheap and
+    // invisible (no download, no interruption). This is only a recovery net
+    // for a crashed/force-closed tab; it is NOT what saves the final file —
+    // that only happens via the Guardar/Resumen buttons, ending the meeting,
+    // or closing the tab (see saveMeetingToFile).
+    function cacheMeetingToStorage() {
+      if (!meetingStartTime) return;
+      chrome.storage.local.set({
+        pendingMeeting: {
+          startedAt: meetingStartTime.getTime(),
+          context,
+          detectedLang,
+          log: meetingLog,
+          updatedAt: Date.now(),
+        },
+      });
+    }
+
+    function clearMeetingCache() {
+      chrome.storage.local.remove('pendingMeeting');
+    }
+
+    // ── Recovery banner (leftover cache from a crash/force-closed tab) ────
+    let recoveredMeetingCache = null;
+
+    async function checkForRecoverableMeeting() {
+      const { pendingMeeting } = await new Promise(resolve => chrome.storage.local.get('pendingMeeting', resolve));
+      if (!pendingMeeting?.log?.some(e => e.type === 'transcript')) return;
+      if (meetingStartTime && pendingMeeting.startedAt === meetingStartTime.getTime()) return; // that's this session
+      recoveredMeetingCache = pendingMeeting;
+      $('recovery-banner').classList.add('visible');
+    }
+
+    $('recovery-download').addEventListener('click', async () => {
+      const cached = recoveredMeetingCache;
+      recoveredMeetingCache = null;
+      $('recovery-banner').classList.remove('visible');
+      if (cached) await downloadCachedMeeting(cached);
+    });
+    $('recovery-dismiss').addEventListener('click', () => {
+      recoveredMeetingCache = null;
+      clearMeetingCache();
+      $('recovery-banner').classList.remove('visible');
+    });
+
+    async function downloadCachedMeeting(cached) {
+      const now = new Date(cached.startedAt || Date.now());
+      const dateStr = now.toISOString().slice(0, 10);
+      const timeStr = now.toTimeString().slice(0, 5).replace(':', '-');
+      const topic = cached.context?.topic ? ' - ' + cached.context.topic.slice(0, 40).replace(/[/\\:*?"<>|]/g, '') : '';
+      const filename = `${dateStr} ${timeStr}${topic} (recuperado).txt`;
+      const log = cached.log || [];
+      const txLines = log.filter(e => e.type === 'transcript').map(e => `[${e.time}] ${e.text}`).join('\n');
+      const cmLines = log.filter(e => e.type === 'comment').map((e, i) => `[${e.time}] Comentario ${i + 1}: ${e.text}`).join('\n');
+
+      let fc = '═══════════════════════════════════════════════════\n  MEET ASSISTANT — REUNIÓN RECUPERADA\n═══════════════════════════════════════════════════\n\n';
+      fc += `Fecha:      ${now.toLocaleDateString('es', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}\n`;
+      if (cached.context?.topic) fc += `Tema:       ${cached.context.topic}\n`;
+      if (cached.context?.profile) fc += `Mi rol:     ${cached.context.profile}\n`;
+      if (cached.detectedLang) fc += `Idioma:     ${cached.detectedLang}\n`;
+      fc += '\n';
+      if (cmLines) fc += '───────────────────────────────────────────────────\n  MIS COMENTARIOS\n───────────────────────────────────────────────────\n' + cmLines + '\n\n';
+      if (txLines) fc += '───────────────────────────────────────────────────\n  TRANSCRIPCIÓN COMPLETA\n───────────────────────────────────────────────────\n' + txLines + '\n';
+
+      await safeSendMessage({ type: 'save-meeting', filename, content: fc });
+      clearMeetingCache();
     }
 
     function getFullTranscript() {
@@ -897,6 +990,8 @@
       const has = meetingLog.filter(e => e.type === 'transcript').length > 0;
       $('btn-summary').disabled = !has;
       $('btn-summary').style.opacity = has ? '1' : '0.4';
+      $('btn-save').disabled = !has;
+      $('btn-save').style.opacity = has ? '1' : '0.4';
     }
 
     // ── Generate comment ─────────────────────────────────────────────────
@@ -1001,19 +1096,29 @@ Respond in ${lang}.${ctxBlock}`;
       setStatus('Listo');
     });
 
-    // ── Summary ──────────────────────────────────────────────────────────
+    // ── Save / Summary ─────────────────────────────────────────────────────
+    $('btn-save').addEventListener('click', async () => {
+      const btn = $('btn-save');
+      btn.disabled = true; btn.textContent = '⏳ Guardando...';
+      const res = await saveMeetingToFile('manual');
+      btn.textContent = '💾 Guardar';
+      updateSummaryBtn();
+      setStatus(res?.ok ? '✓ Reunión guardada en Descargas/Meet Assistant/' : 'Error al guardar', !res?.ok);
+    });
+
     $('btn-summary').addEventListener('click', openSummaryModal);
     $('summary-close').addEventListener('click', () => $('summary-modal').classList.remove('open'));
-    $('btn-open-folder').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'open-meetings-folder' }));
+    $('btn-open-folder').addEventListener('click', () => safeSendMessage({ type: 'open-meetings-folder' }));
     $('summary-copy').addEventListener('click', () => {
       navigator.clipboard.writeText($('summary-content').innerText).then(() => {
         $('summary-copy').textContent = '✓ Copiado';
         setTimeout(() => { $('summary-copy').textContent = '📋 Copiar'; }, 2000);
       });
     });
-    $('summary-new').addEventListener('click', () => {
-      if (!confirm('¿Iniciar nueva reunión? Se borrará el historial actual.')) return;
-      meetingLog = []; currentTranscript = ''; meetingStartTime = null; lastComment = '';
+    $('summary-new').addEventListener('click', async () => {
+      if (!confirm('¿Iniciar nueva reunión? Se guardará la actual antes de borrarla.')) return;
+      if (meetingLog.some(e => e.type === 'transcript')) await saveMeetingToFile('nueva-reunion');
+      meetingLog = []; currentTranscript = ''; meetingStartTime = null; meetingFileName = null; lastComment = '';
       $('transcript-box').innerHTML = '<span class="placeholder-txt">Presiona "Escuchar" para empezar a transcribir...</span>';
       $('translation-box').textContent = '';
       $('comment-feed').innerHTML = '';
@@ -1096,7 +1201,7 @@ Use this exact format:
         renderSummary(summary, duration);
         btn.style.display = 'none';
 
-        const saved = await saveMeetingToFile(summary);
+        const saved = await saveMeetingToFile('summary', summary);
         if (saved.ok) {
           $('sum-saved-msg').textContent = '✓ Guardado en Descargas/Meet Assistant/';
           $('sum-saved-msg').style.display = 'block';
@@ -1129,13 +1234,34 @@ Use this exact format:
     function escapeHtml(s) { return String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
     // ── Save to file ─────────────────────────────────────────────────────
-    async function saveMeetingToFile(summaryText) {
+    // Only ever called from: the "💾 Guardar" button, generating a summary,
+    // starting a new meeting (saves the old one first), or closing the tab —
+    // never on a timer. `meetingFileName` is computed once per meeting and
+    // reused, so saving more than once during the same meeting overwrites
+    // the same file instead of piling up duplicates (background.js uses
+    // conflictAction: 'overwrite').
+    function getMeetingFileName() {
+      if (meetingFileName) return meetingFileName;
       const now = meetingStartTime || new Date();
       const dateStr = now.toISOString().slice(0, 10);
       const timeStr = now.toTimeString().slice(0, 5).replace(':', '-');
       const topic = context.topic ? ' - ' + context.topic.slice(0, 40).replace(/[/\\:*?"<>|]/g, '') : '';
-      const filename = `${dateStr} ${timeStr}${topic}.txt`;
+      meetingFileName = `${dateStr} ${timeStr}${topic}.txt`;
+      return meetingFileName;
+    }
+
+    async function saveMeetingToFile(reason, summaryText = '') {
+      if (!meetingLog.some(e => e.type === 'transcript')) return { ok: false };
+
+      const now = meetingStartTime || new Date();
+      const filename = getMeetingFileName();
       const duration = meetingStartTime ? Math.round((new Date() - meetingStartTime) / 60000) + ' minutos' : '—';
+      const reasonLabel = {
+        manual: 'Guardado manual',
+        summary: 'Resumen generado',
+        'nueva-reunion': 'Nueva reunión iniciada',
+        cierre: 'Cierre de la pestaña',
+      }[reason] || reason;
 
       const txLines = meetingLog.filter(e => e.type === 'transcript').map(e => `[${e.time}] ${e.text}`).join('\n');
       const cmLines = meetingLog.filter(e => e.type === 'comment').map((e, i) => `[${e.time}] Comentario ${i + 1}: ${e.text}`).join('\n');
@@ -1146,6 +1272,7 @@ Use this exact format:
       fc += `Fecha:      ${now.toLocaleDateString('es', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}\n`;
       fc += `Hora:       ${now.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}\n`;
       fc += `Duración:   ${duration}\n`;
+      fc += `Guardado:   ${reasonLabel}\n`;
       if (context.topic) fc += `Tema:       ${context.topic}\n`;
       if (context.profile) fc += `Mi rol:     ${context.profile}\n`;
       if (detectedLang) fc += `Idioma:     ${detectedLang}\n`;
@@ -1164,10 +1291,29 @@ Use this exact format:
       }
       fc += `\n═══════════════════════════════════════════════════\n  Guardado el ${new Date().toLocaleString('es')}\n═══════════════════════════════════════════════════\n`;
 
+      const res = await safeSendMessage({ type: 'save-meeting', filename, content: fc });
+      clearMeetingCache();
+      return res || { ok: false };
+    }
+
+    // chrome.runtime.sendMessage throws "Extension context invalidated" if the
+    // extension was reloaded (e.g. from chrome://extensions) while this tab's
+    // content script is still the old instance — normal during development,
+    // fixed by refreshing the meeting tab. Never let that crash a save/action.
+    function safeSendMessage(msg) {
       return new Promise(resolve => {
-        chrome.runtime.sendMessage({ type: 'save-meeting', filename, content: fc }, resolve);
+        try {
+          chrome.runtime.sendMessage(msg, res => resolve(res));
+        } catch (e) {
+          console.warn('[Meet Assistant] No se pudo comunicar con la extensión — refresca la pestaña.', e);
+          resolve(null);
+        }
       });
     }
+
+    window.addEventListener('beforeunload', () => {
+      if (meetingLog.some(e => e.type === 'transcript')) saveMeetingToFile('cierre');
+    });
 
     // ── Comment feed ─────────────────────────────────────────────────────
     function appendCommentToFeed(text, isAuto = false) {
@@ -1198,65 +1344,6 @@ Use this exact format:
       if (isAtBottom) setTimeout(() => { body.scrollTop = body.scrollHeight; }, 50);
 
       actions.style.display = 'flex';
-    }
-
-    // ── Auto-save (periodic only — NOT on tab switch/hide) ──────────────
-    // Deliberately does not save on visibilitychange: switching tabs to check
-    // something and coming back was creating a new download every time.
-    setInterval(() => {
-      if (meetingLog.filter(e => e.type === 'transcript').length > 0) autoSaveMeeting('autosave');
-    }, 5 * 60 * 1000);
-
-    window.addEventListener('beforeunload', () => {
-      autoSaveMeeting('cierre');
-    });
-
-    async function autoSaveMeeting(reason) {
-      if (meetingLog.filter(e => e.type === 'transcript').length === 0) return;
-
-      const now = meetingStartTime || new Date();
-      const dateStr = now.toISOString().slice(0, 10);
-      const timeStr = now.toTimeString().slice(0, 5).replace(':', '-');
-      const topic = context.topic ? ' - ' + context.topic.slice(0, 40).replace(/[/\\:*?"<>|]/g, '') : '';
-      const suffix = reason === 'autosave' ? ' (autoguardado)' : '';
-      const filename = `${dateStr} ${timeStr}${topic}${suffix}.txt`;
-
-      const txLines = meetingLog.filter(e => e.type === 'transcript').map(e => `[${e.time}] ${e.text}`).join('\n');
-      const cmLines = meetingLog.filter(e => e.type === 'comment').map((e, i) => `[${e.time}] Comentario ${i + 1}: ${e.text}`).join('\n');
-      const duration = meetingStartTime ? Math.round((new Date() - meetingStartTime) / 60000) + ' minutos' : '—';
-
-      const reasonLabel = {
-        cierre: 'Cierre de la pestaña',
-        autosave: 'Guardado automático (cada 5 min)',
-      }[reason] || reason;
-
-      let fc = '═══════════════════════════════════════════════════\n';
-      fc += '  MEET ASSISTANT — REGISTRO DE REUNIÓN\n';
-      fc += '═══════════════════════════════════════════════════\n\n';
-      fc += `Fecha:      ${now.toLocaleDateString('es', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}\n`;
-      fc += `Hora:       ${now.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}\n`;
-      fc += `Duración:   ${duration}\n`;
-      fc += `Guardado:   ${reasonLabel}\n`;
-      if (context.topic) fc += `Tema:       ${context.topic}\n`;
-      if (context.profile) fc += `Mi rol:     ${context.profile}\n`;
-      if (detectedLang) fc += `Idioma:     ${detectedLang}\n`;
-      fc += '\n';
-
-      if (cmLines) {
-        fc += '───────────────────────────────────────────────────\n  MIS COMENTARIOS\n───────────────────────────────────────────────────\n';
-        fc += cmLines + '\n\n';
-      }
-      if (txLines) {
-        fc += '───────────────────────────────────────────────────\n  TRANSCRIPCIÓN COMPLETA\n───────────────────────────────────────────────────\n';
-        fc += txLines + '\n';
-      }
-      fc += `\n═══════════════════════════════════════════════════\n  Guardado automáticamente el ${new Date().toLocaleString('es')}\n═══════════════════════════════════════════════════\n`;
-
-      try {
-        chrome.runtime.sendMessage({ type: 'save-meeting', filename, content: fc }, () => {
-          if (reason !== 'autosave') setStatus(`✓ Reunión guardada (${reasonLabel.toLowerCase()})`);
-        });
-      } catch (e) { console.error('[Meet Assistant] Auto-save error:', e); }
     }
 
     // ── Keyboard shortcuts ───────────────────────────────────────────────

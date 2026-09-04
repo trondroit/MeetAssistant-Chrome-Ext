@@ -33,7 +33,10 @@ async function saveMeeting(filename, content) {
       url,
       filename: `Meet Assistant/${safeName}`,
       saveAs: false,
-      conflictAction: 'uniquify',
+      // 'overwrite': saving more than once during the same meeting (Guardar,
+      // then Resumen, then closing the tab) replaces the same file instead
+      // of piling up "archivo (1).txt", "archivo (2).txt", etc.
+      conflictAction: 'overwrite',
     });
     return { ok: true, downloadId };
   } catch (e) {
