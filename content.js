@@ -1200,14 +1200,13 @@ Use this exact format:
       actions.style.display = 'flex';
     }
 
-    // ── Auto-save (periodic + on tab hide) ──────────────────────────────
+    // ── Auto-save (periodic only — NOT on tab switch/hide) ──────────────
+    // Deliberately does not save on visibilitychange: switching tabs to check
+    // something and coming back was creating a new download every time.
     setInterval(() => {
       if (meetingLog.filter(e => e.type === 'transcript').length > 0) autoSaveMeeting('autosave');
     }, 5 * 60 * 1000);
 
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) autoSaveMeeting('tab-oculta');
-    });
     window.addEventListener('beforeunload', () => {
       autoSaveMeeting('cierre');
     });
@@ -1227,7 +1226,6 @@ Use this exact format:
       const duration = meetingStartTime ? Math.round((new Date() - meetingStartTime) / 60000) + ' minutos' : '—';
 
       const reasonLabel = {
-        'tab-oculta': 'Pestaña en segundo plano',
         cierre: 'Cierre de la pestaña',
         autosave: 'Guardado automático (cada 5 min)',
       }[reason] || reason;
