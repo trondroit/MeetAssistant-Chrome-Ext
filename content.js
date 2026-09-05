@@ -653,6 +653,7 @@
       /dice en el chat/i,
       /says? in the chat/i,
       /se activ(ó|aron) (el|los) subt[ií]tulo/i,
+      /desactiv(ó|aron) (el|los) subt[ií]tulo/i,
       /subtitles? (were|have been|turned) (on|off)/i,
       /las personas que usen este v[ií]nculo/i,
       /people who use this meeting link/i,
@@ -660,7 +661,23 @@
       /joined the (call|meeting)/i,
       /sali[oó] de la (llamada|reuni[oó]n)/i,
       /left the (call|meeting)/i,
+      /tu micr[oó]fono est[aá] (activado|desactivado|silenciado)/i,
+      /your microphone is (on|off|muted)/i,
+      /tu c[aá]mara est[aá] (activada|desactivada)/i,
+      /your camera is (on|off)/i,
+      /perdiste la conexi[oó]n/i,
+      /lost (your )?(network )?connection/i,
+      /intentando restablecer/i,
+      /attempting to reconnect/i,
+      /reconnecting/i,
+      /se volver[aá] a la pantalla principal/i,
+      /return(ing)? to the home screen/i,
+      /quedan? \d+ segundos?/i,
+      /\d+ seconds? (remaining|left)/i,
+      /ir al final/i,
+      /scroll to (the )?(bottom|latest)/i,
       /https?:\/\//i, // toasts/chat links almost always contain a URL; spoken captions basically never do
+      /^[a-z]+(_[a-z]+)+$/, // a lone Material-icon ligature name (e.g. "arrow_downward") — button chrome, not speech
     ];
 
     function looksLikeSystemMessage(text) {
@@ -689,9 +706,17 @@
       return null;
     }
 
+    const IS_MEET = /(^|\.)meet\.google\.com$/.test(location.hostname);
+
     function findCaptionsRegion() {
       const known = findKnownCaptionsRegion();
       if (known) return known;
+      // On Meet we have a confirmed selector (.a4cQT/.iOzk7) — if it's not
+      // there right now, captions just aren't showing yet. Never fall back
+      // to the generic aria-live/role guess here: that's what kept grabbing
+      // unrelated toasts (mic/camera status, network reconnect, captions
+      // off, "scroll to bottom" button) instead of real captions.
+      if (IS_MEET) return null;
 
       const candidates = Array.from(document.querySelectorAll(
         '[aria-live="polite"], [aria-live="assertive"], [role="log"], [role="status"]'
