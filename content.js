@@ -961,10 +961,20 @@
       if (hide) {
         if (captionsHideStyleEl) return;
         captionsHideStyleEl = document.createElement('style');
-        // display:none collapses the whole caption box so it takes NO space
-        // (like Tactiq) — not just transparent. MutationObservers keep firing
-        // on display:none nodes, so the captions engine still reads the text.
-        captionsHideStyleEl.textContent = `${MEET_CAPTIONS_CONTAINER_SELECTOR} { display: none !important; }`;
+        // Move the caption box fully OFF-SCREEN instead of display:none. Two
+        // reasons: (1) it collapses the on-screen space (like Tactiq) — the box
+        // is gone from view and reserves nothing; (2) crucially, an off-screen
+        // element still has layout geometry, so getClientRects() stays non-empty
+        // and findCaptionsRegion() can still locate .a4cQT/.iOzk7. display:none
+        // zeroes the client rects, which made detection fail ("No detecto
+        // subtítulos") even though captions were on. Text keeps updating either
+        // way, so the engine still reads it.
+        captionsHideStyleEl.textContent = `${MEET_CAPTIONS_CONTAINER_SELECTOR} {
+          position: fixed !important;
+          left: -99999px !important; right: auto !important;
+          top: auto !important; bottom: 0 !important;
+          opacity: 0 !important; pointer-events: none !important; z-index: -1 !important;
+        }`;
         document.head.appendChild(captionsHideStyleEl);
       } else if (captionsHideStyleEl) {
         captionsHideStyleEl.remove();
