@@ -973,6 +973,10 @@
     }
 
     function blockCaptionToggleClick(e) {
+      // Only block REAL user clicks. Our own ensureMeetCaptionsOn() uses
+      // btn.click() (isTrusted === false) to self-heal captions, and that must
+      // still get through even while the button is locked to the user.
+      if (!e.isTrusted) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       setStatus('Los subtítulos están bloqueados mientras Meet Assistant escucha — presiona "Detener" para soltarlos');
@@ -1069,7 +1073,16 @@
     }
 
     function startCaptionsWatch() {
+      // Do these THREE things up front, before any region is detected, so the
+      // caption box collapses and the CC button grays out immediately (no more
+      // waiting ~1.5s) and the user can't fight our auto-enable by clicking CC:
+      //   1. Collapse the caption box now — the CSS rule just waits for .a4cQT.
+      //   2. Turn Meet's captions on for them (programmatic click).
+      //   3. Lock + gray the CC button now (real clicks blocked; ours still work
+      //      via isTrusted, so ensureMeetCaptionsOn can still self-heal).
+      hideVisibleCaptions(true);
       ensureMeetCaptionsOn();
+      lockCaptionsToggleButton(true);
       // Prime the activity scores for a moment before committing to a region —
       // gives an already-updating real captions region a chance to reveal
       // itself instead of locking onto whatever merely has the most static
@@ -1077,6 +1090,7 @@
       findCaptionsRegion();
       captionsPollTimer = setTimeout(() => {
         if (!isListening || captureMode !== 'captions') return;
+        lockCaptionsToggleButton(true); // re-lock in case Meet re-rendered the button
         const region = findCaptionsRegion();
         if (!region) {
           $('capture-hint').style.display = '';
