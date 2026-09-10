@@ -605,7 +605,9 @@
     // Meet's settings dialog for you (Settings → Captions → language). This is
     // best-effort DOM automation; if Meet's layout differs it falls back to a
     // hint telling you where to change it manually.
-    let meetCaptionsLang = config.meetCaptionsLang || null;
+    // Default Meet's caption language to Spanish unless the user picked another.
+    let meetCaptionsLang = config.meetCaptionsLang || 'es';
+    let captionLangApplied = false; // apply it at most once per listen session
     const CAPTION_LANG_NAMES = { es: ['Español', 'Spanish'], en: ['English', 'Inglés'] };
 
     function waitForEl(finder, timeout = 4000, interval = 150) {
@@ -1115,6 +1117,11 @@
         lockCaptionsToggleButton(true);
         $('capture-hint').style.display = 'none';
         setStatus('Escuchando los subtítulos de la reunión...');
+        // Set Meet's caption language (Spanish by default) once per session.
+        if (IS_MEET && meetCaptionsLang && !captionLangApplied) {
+          captionLangApplied = true;
+          setTimeout(() => { if (isListening) applyCaptionsLanguage(meetCaptionsLang); }, 1200);
+        }
         captionsPollTimer = setTimeout(recheckCaptionsRegion, 2000);
       }, 1500);
     }
@@ -1125,6 +1132,7 @@
       captionSeen = new WeakMap();
       if (captionsPollTimer) { clearTimeout(captionsPollTimer); captionsPollTimer = null; }
       captionsRegion = null;
+      captionLangApplied = false;
       hideVisibleCaptions(false);
       lockCaptionsToggleButton(false);
     }
