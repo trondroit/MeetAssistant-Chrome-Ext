@@ -391,12 +391,23 @@
 
   const $ = id => shadow.getElementById(id);
 
+  // Is the extension context still alive? It dies ("Extension context
+  // invalidated") when the extension is reloaded/updated from chrome://extensions
+  // while this old content script keeps running in an already-open tab. When
+  // that happens every chrome.* call throws — so we check this and no-op
+  // instead of flooding the console. Fix for the user: refresh the tab.
+  function extAlive() {
+    try { return !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; }
+  }
+
   // ── Config (chrome.storage.local) ───────────────────────────────────────
   async function loadConfig() {
-    return new Promise(resolve => chrome.storage.local.get(null, resolve));
+    if (!extAlive()) return {};
+    return new Promise(resolve => { try { chrome.storage.local.get(null, resolve); } catch (_) { resolve({}); } });
   }
   async function saveConfig(patch) {
-    return new Promise(resolve => chrome.storage.local.set(patch, resolve));
+    if (!extAlive()) return;
+    return new Promise(resolve => { try { chrome.storage.local.set(patch, resolve); } catch (_) { resolve(); } });
   }
 
   (async function main() {
@@ -447,13 +458,15 @@
     }
     init();
 
-    chrome.storage.onChanged.addListener((changes, area) => {
-      if (area !== 'local') return;
-      const patch = {};
-      for (const key in changes) patch[key] = changes[key].newValue;
-      config = { ...config, ...patch };
-      init();
-    });
+    try {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== 'local') return;
+        const patch = {};
+        for (const key in changes) patch[key] = changes[key].newValue;
+        config = { ...config, ...patch };
+        init();
+      });
+    } catch (_) { /* extension context gone; refresh the tab */ }
 
     // ── Header ───────────────────────────────────────────────────────────
     $('btn-setup').addEventListener('click', () => safeSendMessage({ type: 'open-options' }));
@@ -1319,6 +1332,8 @@
     // or closing the tab (see saveMeetingToFile).
     function cacheMeetingToStorage() {
       if (!meetingStartTime) return;
+      if (!extAlive()) { handleOrphaned(); return; }
+      try {
       chrome.storage.local.set({
         pendingMeeting: {
           startedAt: meetingStartTime.getTime(),
@@ -1328,17 +1343,41 @@
           updatedAt: Date.now(),
         },
       });
+      } catch (_) { handleOrphaned(); }
+    }
+
+    // Called when we detect the extension context died under us (reloaded from
+    // chrome://extensions while this tab kept the old script). Stop everything
+    // once, quietly, and tell the user to refresh — instead of throwing on
+    // every caption line / timer tick.
+    let orphaned = false;
+    function handleOrphaned() {
+      if (orphaned) return;
+      orphaned = true;
+      try { stopCaptionsWatch(); } catch (_) {}
+      try { if (captionsPollTimer) clearTimeout(captionsPollTimer); } catch (_) {}
+      try { clearSilenceTimer(); } catch (_) {}
+      isListening = false;
+      try {
+        $('status-text').textContent = '🔄 Recarga la pestaña (la extensión se actualizó)';
+        $('listen-btn').className = 'idle';
+        $('listen-btn').textContent = '🎙 Escuchar reunión';
+        $('status-dot').className = 'status-dot';
+      } catch (_) {}
+      console.warn('[Meet Assistant] Extension context invalidated — refresca la pestaña de Meet para reconectar.');
     }
 
     function clearMeetingCache() {
-      chrome.storage.local.remove('pendingMeeting');
+      if (!extAlive()) return;
+      try { chrome.storage.local.remove('pendingMeeting'); } catch (_) {}
     }
 
     // ── Recovery banner (leftover cache from a crash/force-closed tab) ────
     let recoveredMeetingCache = null;
 
     async function checkForRecoverableMeeting() {
-      const { pendingMeeting } = await new Promise(resolve => chrome.storage.local.get('pendingMeeting', resolve));
+      if (!extAlive()) return;
+      const { pendingMeeting } = await new Promise(resolve => { try { chrome.storage.local.get('pendingMeeting', resolve); } catch (_) { resolve({}); } });
       if (!pendingMeeting?.log?.some(e => e.type === 'transcript')) return;
       if (meetingStartTime && pendingMeeting.startedAt === meetingStartTime.getTime()) return; // that's this session
       recoveredMeetingCache = pendingMeeting;
@@ -1700,10 +1739,15 @@ Use this exact format:
     // fixed by refreshing the meeting tab. Never let that crash a save/action.
     function safeSendMessage(msg) {
       return new Promise(resolve => {
+        if (!extAlive()) { handleOrphaned(); resolve(null); return; }
         try {
-          chrome.runtime.sendMessage(msg, res => resolve(res));
+          chrome.runtime.sendMessage(msg, res => {
+            // Reading lastError swallows the "context invalidated" async warning.
+            void chrome.runtime.lastError;
+            resolve(res);
+          });
         } catch (e) {
-          console.warn('[Meet Assistant] No se pudo comunicar con la extensión — refresca la pestaña.', e);
+          handleOrphaned();
           resolve(null);
         }
       });
