@@ -9,6 +9,8 @@
   if (config.defaultInstructions) document.getElementById('default-instructions').value = config.defaultInstructions;
   if (config.autoLang !== undefined) document.getElementById('auto-lang').checked = config.autoLang;
   if (config.autoClear !== undefined) document.getElementById('auto-clear').checked = config.autoClear;
+  if (config.autoListen !== undefined) document.getElementById('auto-listen').checked = config.autoListen;
+  document.getElementById('caplang-sel').value = config.meetCaptionsLang || 'es';
 
   const keyInput = document.getElementById('openai-key');
   document.getElementById('toggle-key').addEventListener('click', () => {
@@ -25,6 +27,8 @@
       defaultInstructions: document.getElementById('default-instructions').value.trim(),
       autoLang: document.getElementById('auto-lang').checked,
       autoClear: document.getElementById('auto-clear').checked,
+      autoListen: document.getElementById('auto-listen').checked,
+      meetCaptionsLang: document.getElementById('caplang-sel').value,
     };
 
     if (data.openaiKey && !data.openaiKey.startsWith('sk-')) {
