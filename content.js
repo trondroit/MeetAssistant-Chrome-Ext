@@ -1383,6 +1383,7 @@
       if (!meetingStartTime) return;
       if (!extAlive()) { handleOrphaned(); return; }
       try {
+      const hasTranscript = meetingLog.some(e => e.type === 'transcript');
       chrome.storage.local.set({
         pendingMeeting: {
           startedAt: meetingStartTime.getTime(),
@@ -1391,6 +1392,13 @@
           log: meetingLog,
           updatedAt: Date.now(),
         },
+        // A fully-formatted, ready-to-download copy. The background service
+        // worker downloads THIS when the tab closes (it outlives the tab), so
+        // the transcript still gets saved even if the tab/Chrome closes or
+        // crashes mid-meeting — no dependence on an async save during unload.
+        pendingMeetingFile: hasTranscript
+          ? { filename: meetingFileName || computeMeetingFileName(), content: buildMeetingFileContent('cierre') }
+          : null,
       });
       } catch (_) { handleOrphaned(); }
     }
@@ -1418,7 +1426,7 @@
 
     function clearMeetingCache() {
       if (!extAlive()) return;
-      try { chrome.storage.local.remove('pendingMeeting'); } catch (_) {}
+      try { chrome.storage.local.remove(['pendingMeeting', 'pendingMeetingFile']); } catch (_) {}
     }
 
     // ── Recovery banner (leftover cache from a crash/force-closed tab) ────
@@ -1760,21 +1768,22 @@ Use this exact format:
     // manual topic if you set one, otherwise a rough guess from the most-
     // repeated words in the transcript. Computed once per meeting and cached so
     // repeat saves overwrite the same file instead of piling up duplicates.
-    function getMeetingFileName() {
-      if (meetingFileName) return meetingFileName;
+    function computeMeetingFileName() {
       const now = meetingStartTime || new Date();
       const dateStr = now.toISOString().slice(0, 10);
       const transcriptText = meetingLog.filter(e => e.type === 'transcript').map(e => e.text).join(' ');
       const title = sanitizeForFile(context.topic || titleFromTranscript(transcriptText));
-      meetingFileName = `Meet Assistant ${dateStr} — ${title}.txt`;
+      return `Meet Assistant ${dateStr} — ${title}.txt`;
+    }
+
+    function getMeetingFileName() {
+      if (meetingFileName) return meetingFileName;
+      meetingFileName = computeMeetingFileName();
       return meetingFileName;
     }
 
-    async function saveMeetingToFile(reason, summaryText = '') {
-      if (!meetingLog.some(e => e.type === 'transcript')) return { ok: false };
-
+    function buildMeetingFileContent(reason, summaryText = '') {
       const now = meetingStartTime || new Date();
-      const filename = getMeetingFileName();
       const duration = meetingStartTime ? Math.round((new Date() - meetingStartTime) / 60000) + ' minutos' : '—';
       const reasonLabel = {
         manual: 'Guardado manual',
@@ -1811,7 +1820,13 @@ Use this exact format:
         fc += txLines + '\n';
       }
       fc += `\n═══════════════════════════════════════════════════\n  Guardado el ${new Date().toLocaleString('es')}\n═══════════════════════════════════════════════════\n`;
+      return fc;
+    }
 
+    async function saveMeetingToFile(reason, summaryText = '') {
+      if (!meetingLog.some(e => e.type === 'transcript')) return { ok: false };
+      const filename = getMeetingFileName();
+      const fc = buildMeetingFileContent(reason, summaryText);
       const res = await safeSendMessage({ type: 'save-meeting', filename, content: fc });
       clearMeetingCache();
       return res || { ok: false };
@@ -1837,9 +1852,24 @@ Use this exact format:
       });
     }
 
-    window.addEventListener('beforeunload', () => {
-      if (meetingLog.some(e => e.type === 'transcript')) saveMeetingToFile('cierre');
-    });
+    // Let the background service worker know this is a meeting tab, so it can
+    // download the cached transcript when the tab/window/Chrome closes — the SW
+    // outlives the tab, so this works even when an async save during unload
+    // wouldn't. For a real power outage nothing can save at that instant; the
+    // recovery banner (next time you open Meet) covers that case.
+    function registerMeetingTab() { safeSendMessage({ type: 'register-meeting-tab' }); }
+    registerMeetingTab();
+
+    let savedOnClose = false;
+    function saveOnClose() {
+      if (savedOnClose) return; // beforeunload + pagehide can both fire
+      if (!meetingLog.some(e => e.type === 'transcript')) return;
+      savedOnClose = true;
+      cacheMeetingToStorage();                    // flush the latest into storage
+      safeSendMessage({ type: 'save-on-close' }); // SW downloads it (survives unload)
+    }
+    window.addEventListener('beforeunload', saveOnClose);
+    window.addEventListener('pagehide', saveOnClose);
 
     // ── Comment feed ─────────────────────────────────────────────────────
     function appendCommentToFeed(text, isAuto = false) {

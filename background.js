@@ -2,7 +2,7 @@
 // Handles things content scripts can't do directly: opening the options page
 // and saving meeting transcripts through the Downloads API.
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return;
 
   if (msg.type === 'open-options') {
@@ -17,12 +17,50 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true; // keep the message channel open for the async response
   }
 
+  // The content script marks its tab as a meeting tab so we can auto-save it
+  // when the tab closes (see chrome.tabs.onRemoved below).
+  if (msg.type === 'register-meeting-tab') {
+    if (sender.tab?.id != null) chrome.storage.local.set({ meetingTabId: sender.tab.id });
+    sendResponse?.({ ok: true });
+    return;
+  }
+
+  // Sent from the tab's pagehide/beforeunload — download the cached transcript
+  // right now from the background (which survives the tab being torn down).
+  if (msg.type === 'save-on-close') {
+    downloadPendingMeetingFile();
+    sendResponse?.({ ok: true });
+    return;
+  }
+
   if (msg.type === 'open-meetings-folder') {
     chrome.downloads.showDefaultFolder?.();
     sendResponse({ ok: true });
     return;
   }
 });
+
+// Auto-save when the meeting tab is closed (tab close, window close, quitting
+// Chrome). The content script can't reliably finish a download during unload,
+// but this service worker outlives the tab, so it downloads the last cached
+// transcript from storage. Not fired on a hard crash/power cut — the in-app
+// recovery banner handles that on the next launch.
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  try {
+    const { meetingTabId } = await chrome.storage.local.get('meetingTabId');
+    if (meetingTabId === tabId) await downloadPendingMeetingFile();
+  } catch (_) {}
+});
+
+async function downloadPendingMeetingFile() {
+  try {
+    const { pendingMeetingFile } = await chrome.storage.local.get('pendingMeetingFile');
+    if (!pendingMeetingFile || !pendingMeetingFile.content) return;
+    await saveMeeting(pendingMeetingFile.filename, pendingMeetingFile.content);
+    // Clear so we don't download it again and the recovery banner won't re-offer it.
+    await chrome.storage.local.remove(['pendingMeeting', 'pendingMeetingFile', 'meetingTabId']);
+  } catch (_) {}
+}
 
 async function saveMeeting(filename, content) {
   try {
