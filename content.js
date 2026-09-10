@@ -18,8 +18,13 @@
   :host { all: initial; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   .ma-root { position: fixed; bottom: 20px; right: 20px; z-index: 2147483647; font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; }
-  #app { width: 360px; height: 620px; background: rgba(18,18,30,0.97); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; display: flex; flex-direction: column; overflow: hidden; color: #e0e0f0; box-shadow: 0 20px 60px rgba(0,0,0,0.55); }
+  #app { position: relative; width: 360px; height: 620px; min-width: 300px; min-height: 360px; max-width: 95vw; max-height: 95vh; background: rgba(18,18,30,0.97); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; display: flex; flex-direction: column; overflow: hidden; color: #e0e0f0; box-shadow: 0 20px 60px rgba(0,0,0,0.55); }
   #app.hidden { display: none; }
+
+  /* Resize handle (bottom-right corner) */
+  #resize-handle { position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; z-index: 20; }
+  #resize-handle::after { content: ''; position: absolute; right: 4px; bottom: 4px; width: 8px; height: 8px; border-right: 2px solid rgba(255,255,255,.4); border-bottom: 2px solid rgba(255,255,255,.4); border-bottom-right-radius: 3px; }
+  #resize-handle:hover::after { border-color: rgba(165,180,252,.9); }
 
   /* Bubble (minimized) */
   #bubble { display: none; width: 52px; height: 52px; border-radius: 50%; background: linear-gradient(135deg,#6366f1,#8b5cf6); align-items: center; justify-content: center; font-size: 22px; cursor: pointer; box-shadow: 0 8px 24px rgba(0,0,0,.45); border: none; }
@@ -240,6 +245,14 @@
         </div>
       </div>
 
+      <div class="row-wrap" id="caplang-row">
+        <div class="row-label">Idioma de los subtítulos de Meet</div>
+        <div class="toggle-row">
+          <button class="tgl-btn" id="caplang-es">🇪🇸 Español</button>
+          <button class="tgl-btn" id="caplang-en">🇺🇸 English</button>
+        </div>
+      </div>
+
       <button id="listen-btn" class="idle">🎙 Escuchar reunión</button>
       <div id="capture-hint"></div>
 
@@ -323,6 +336,8 @@
       <div id="status-text">Listo</div>
       <div class="shortcut">Alt+M mic · Alt+G generar · Alt+S resumen</div>
     </div>
+
+    <div id="resize-handle" title="Arrastra para cambiar el tamaño"></div>
   </div>
 
   <div id="ctx-modal" class="modal-overlay">
@@ -494,6 +509,56 @@
       });
     })();
 
+    // ── Resize (bottom-right handle) ──────────────────────────────────────
+    // The panel used to be a single fixed size; now it can be made wider/
+    // taller/narrower/shorter and the chosen size is remembered per browser.
+    (function enableResize() {
+      const handle = $('resize-handle');
+      const app = $('app');
+      const MIN_W = 300, MIN_H = 360;
+      const maxW = () => Math.round(window.innerWidth * 0.95);
+      const maxH = () => Math.round(window.innerHeight * 0.95);
+
+      // Restore a saved size (if any) on startup.
+      if (config.panelSize && config.panelSize.w && config.panelSize.h) {
+        app.style.width = Math.min(Math.max(MIN_W, config.panelSize.w), maxW()) + 'px';
+        app.style.height = Math.min(Math.max(MIN_H, config.panelSize.h), maxH()) + 'px';
+      }
+
+      let resizing = false, startX = 0, startY = 0, startW = 0, startH = 0;
+      function onMove(e) {
+        if (!resizing) return;
+        app.style.width = Math.min(Math.max(MIN_W, startW + (e.clientX - startX)), maxW()) + 'px';
+        app.style.height = Math.min(Math.max(MIN_H, startH + (e.clientY - startY)), maxH()) + 'px';
+      }
+      function onUp() {
+        if (!resizing) return;
+        resizing = false;
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        saveConfig({ panelSize: { w: app.offsetWidth, h: app.offsetHeight } });
+      }
+      handle.addEventListener('mousedown', e => {
+        // Anchor to top/left at the current on-screen spot first (same trick as
+        // drag) so the panel grows predictably down/right instead of fighting
+        // the initial bottom/right anchoring.
+        const rect = rootEl.getBoundingClientRect();
+        rootEl.style.left = rect.left + 'px';
+        rootEl.style.top = rect.top + 'px';
+        rootEl.style.right = 'auto';
+        rootEl.style.bottom = 'auto';
+        resizing = true;
+        startX = e.clientX; startY = e.clientY;
+        startW = app.offsetWidth; startH = app.offsetHeight;
+        document.body.style.userSelect = 'none';
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+        e.preventDefault();
+        e.stopPropagation();
+      });
+    })();
+
     // ── Context modal ────────────────────────────────────────────────────
     $('context-bar').addEventListener('click', () => {
       $('ctx-topic').value = context.topic || '';
@@ -534,6 +599,118 @@
       $('translation-wrap').classList.toggle('visible', mode !== 'off');
       if (mode === 'off') $('translation-box').textContent = '';
     }
+
+    // ── Meet captions language (change Meet's OWN caption language) ────────
+    // Lets you pick ES/EN without opening Meet's settings by hand: we drive
+    // Meet's settings dialog for you (Settings → Captions → language). This is
+    // best-effort DOM automation; if Meet's layout differs it falls back to a
+    // hint telling you where to change it manually.
+    let meetCaptionsLang = config.meetCaptionsLang || null;
+    const CAPTION_LANG_NAMES = { es: ['Español', 'Spanish'], en: ['English', 'Inglés'] };
+
+    function waitForEl(finder, timeout = 4000, interval = 150) {
+      return new Promise(resolve => {
+        const start = Date.now();
+        (function tick() {
+          let el = null;
+          try { el = finder(); } catch (_) {}
+          if (el) return resolve(el);
+          if (Date.now() - start >= timeout) return resolve(null);
+          setTimeout(tick, interval);
+        })();
+      });
+    }
+
+    function findByText(selector, texts, scope) {
+      const wanted = texts.map(t => t.toLowerCase());
+      const root = scope || document;
+      return Array.from(root.querySelectorAll(selector)).find(el => {
+        if (host.contains(el)) return false;
+        const label = ((el.getAttribute('aria-label') || '') + ' ' + (el.textContent || '')).toLowerCase();
+        return wanted.some(w => label.includes(w));
+      }) || null;
+    }
+
+    async function setMeetCaptionsLanguage(lang) {
+      const names = CAPTION_LANG_NAMES[lang];
+      if (!names) return false;
+
+      // 1. Open Meet's Settings dialog — either a direct button or nested in
+      //    the "More options" (⋮) menu depending on the layout.
+      let settingsBtn = findByText('button[aria-label], [role="button"][aria-label]', ['Settings', 'Configuración', 'Ajustes']);
+      if (!settingsBtn) {
+        const moreBtn = findByText('button[aria-label], [role="button"][aria-label]', ['More options', 'Más opciones']);
+        if (moreBtn) {
+          moreBtn.click();
+          settingsBtn = await waitForEl(() => findByText('[role="menuitem"], button, [role="button"]', ['Settings', 'Configuración', 'Ajustes']));
+        }
+      }
+      if (!settingsBtn) return false;
+      settingsBtn.click();
+
+      // 2. Open the Captions tab inside the dialog.
+      const captionsTab = await waitForEl(() => findByText('[role="tab"], [role="option"], button, li', ['Captions', 'Subtítulos']));
+      if (captionsTab) captionsTab.click();
+
+      // 3. Find the language dropdown. Meet renders a custom dropdown showing
+      //    the current language as its label (native <select> as a fallback).
+      const dropdown = await waitForEl(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        const nativeSel = (dialog || document).querySelector('select');
+        if (nativeSel) return nativeSel;
+        return findByText('[role="combobox"], [role="button"], [role="listbox"]',
+          ['English', 'Español', 'Spanish', 'Inglés', 'idioma', 'language'], dialog || document);
+      });
+      if (!dropdown) return false;
+
+      if (dropdown.tagName === 'SELECT') {
+        const opt = Array.from(dropdown.options).find(o => names.some(n => (o.textContent || '').toLowerCase().includes(n.toLowerCase())));
+        if (!opt) return false;
+        dropdown.value = opt.value;
+        dropdown.dispatchEvent(new Event('change', { bubbles: true }));
+      } else {
+        dropdown.click();
+        const option = await waitForEl(() => findByText('[role="option"], [role="menuitemradio"], [role="menuitem"], li', names));
+        if (!option) return false;
+        option.click();
+      }
+
+      // 4. Close the settings dialog.
+      const closeBtn = findByText('button[aria-label], [role="button"][aria-label]', ['Close', 'Cerrar']);
+      if (closeBtn) closeBtn.click();
+      return true;
+    }
+
+    function setCaptionsLangButtons(lang, pending) {
+      [['caplang-es', 'es'], ['caplang-en', 'en']].forEach(([id, code]) => {
+        const active = !pending && lang === code;
+        $(id).className = 'tgl-btn' + (active ? ' active teal' : '');
+      });
+    }
+
+    async function applyCaptionsLanguage(lang) {
+      $('caplang-' + lang).textContent = '⏳ ...';
+      setStatus('Cambiando el idioma de los subtítulos de Meet...');
+      let ok = false;
+      try { ok = await setMeetCaptionsLanguage(lang); } catch (_) { ok = false; }
+      $('caplang-es').textContent = '🇪🇸 Español';
+      $('caplang-en').textContent = '🇺🇸 English';
+      if (ok) {
+        meetCaptionsLang = lang;
+        setCaptionsLangButtons(lang, false);
+        saveConfig({ meetCaptionsLang: lang });
+        setStatus(lang === 'es' ? 'Subtítulos de Meet en Español ✓' : 'Meet captions set to English ✓');
+      } else {
+        setCaptionsLangButtons(meetCaptionsLang, false);
+        setStatus('No pude cambiarlo automáticamente — hazlo en Meet: ⚙️ Configuración → Subtítulos → Idioma.');
+      }
+    }
+
+    $('caplang-es').addEventListener('click', () => applyCaptionsLanguage('es'));
+    $('caplang-en').addEventListener('click', () => applyCaptionsLanguage('en'));
+    if (meetCaptionsLang) setCaptionsLangButtons(meetCaptionsLang, false);
+    // The language automation drives Meet's own settings, so only offer it on Meet.
+    if (!/(^|\.)meet\.google\.com$/.test(location.hostname)) $('caplang-row').style.display = 'none';
 
     // ── Auto/Manual mode ─────────────────────────────────────────────────
     $('btn-manual').addEventListener('click', () => setMode('manual'));
@@ -784,7 +961,10 @@
       if (hide) {
         if (captionsHideStyleEl) return;
         captionsHideStyleEl = document.createElement('style');
-        captionsHideStyleEl.textContent = `${MEET_CAPTIONS_CONTAINER_SELECTOR} { opacity: 0 !important; pointer-events: none !important; }`;
+        // display:none collapses the whole caption box so it takes NO space
+        // (like Tactiq) — not just transparent. MutationObservers keep firing
+        // on display:none nodes, so the captions engine still reads the text.
+        captionsHideStyleEl.textContent = `${MEET_CAPTIONS_CONTAINER_SELECTOR} { display: none !important; }`;
         document.head.appendChild(captionsHideStyleEl);
       } else if (captionsHideStyleEl) {
         captionsHideStyleEl.remove();
@@ -804,9 +984,24 @@
       if (lock) {
         if (lockedCaptionButtons.has(btn)) return;
         btn.addEventListener('click', blockCaptionToggleClick, true);
+        // Gray it out and make it look disabled (like Tactiq) while we own the
+        // captions — visually locked, not clickable. Saved style is restored
+        // on unlock.
+        btn.dataset.maPrevStyle = btn.getAttribute('style') || '';
+        btn.style.setProperty('opacity', '0.4', 'important');
+        btn.style.setProperty('pointer-events', 'none', 'important');
+        btn.style.setProperty('cursor', 'not-allowed', 'important');
+        btn.style.setProperty('filter', 'grayscale(1)', 'important');
+        btn.setAttribute('aria-disabled', 'true');
         lockedCaptionButtons.add(btn);
       } else if (lockedCaptionButtons.has(btn)) {
         btn.removeEventListener('click', blockCaptionToggleClick, true);
+        if (typeof btn.dataset.maPrevStyle === 'string') {
+          if (btn.dataset.maPrevStyle) btn.setAttribute('style', btn.dataset.maPrevStyle);
+          else btn.removeAttribute('style');
+          delete btn.dataset.maPrevStyle;
+        }
+        btn.removeAttribute('aria-disabled');
         lockedCaptionButtons.delete(btn);
       }
     }
