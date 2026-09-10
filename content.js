@@ -1399,10 +1399,10 @@
     async function downloadCachedMeeting(cached) {
       const now = new Date(cached.startedAt || Date.now());
       const dateStr = now.toISOString().slice(0, 10);
-      const timeStr = now.toTimeString().slice(0, 5).replace(':', '-');
-      const topic = cached.context?.topic ? ' - ' + cached.context.topic.slice(0, 40).replace(/[/\\:*?"<>|]/g, '') : '';
-      const filename = `${dateStr} ${timeStr}${topic} (recuperado).txt`;
       const log = cached.log || [];
+      const cachedTranscript = log.filter(e => e.type === 'transcript').map(e => e.text).join(' ');
+      const title = sanitizeForFile(cached.context?.topic || titleFromTranscript(cachedTranscript));
+      const filename = `Meet Assistant ${dateStr} — ${title} (recuperado).txt`;
       const txLines = log.filter(e => e.type === 'transcript').map(e => `[${e.time}] ${e.text}`).join('\n');
       const cmLines = log.filter(e => e.type === 'comment').map((e, i) => `[${e.time}] Comentario ${i + 1}: ${e.text}`).join('\n');
 
@@ -1677,13 +1677,47 @@ Use this exact format:
     // reused, so saving more than once during the same meeting overwrites
     // the same file instead of piling up duplicates (background.js uses
     // conflictAction: 'overwrite').
+    // Common filler words to ignore when guessing a title from the transcript.
+    const TITLE_STOPWORDS = new Set([
+      'para','pero','como','este','esta','esto','esos','esas','este','porque','cuando','donde',
+      'entonces','tambien','también','solo','sólo','sobre','entre','desde','hasta','muy','más','mas',
+      'está','estás','estan','están','estamos','hemos','vamos','tiene','tienen','tenemos','hacer',
+      'puede','pueden','podemos','todo','todos','toda','todas','nada','algo','bien','ahora','luego',
+      'cada','otro','otra','otros','otras','aqui','aquí','ahi','ahí','ellos','ellas','nosotros',
+      'ustedes','usted','quien','quienes','cual','cuales','mismo','misma','hola','gracias','entonces',
+      'the','and','that','this','with','from','have','what','your','you','are','for','was','were',
+      'they','them','then','there','here','about','would','could','should','have','been','because',
+      'just','like','yeah','okay','right','going','gonna','really','think','know','well','into','over',
+    ]);
+
+    function titleFromTranscript(text) {
+      if (!text || !text.trim()) return 'Reunión';
+      const words = (text.toLowerCase().match(/[a-záéíóúñü]{4,}/gi) || []);
+      const freq = new Map();
+      for (const w of words) {
+        if (TITLE_STOPWORDS.has(w)) continue;
+        freq.set(w, (freq.get(w) || 0) + 1);
+      }
+      const top = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w]) => w);
+      if (!top.length) return 'Reunión';
+      return top.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    }
+
+    function sanitizeForFile(s) {
+      return (s || '').replace(/[/\\:*?"<>|]/g, '').replace(/\s+/g, ' ').trim().slice(0, 50);
+    }
+
+    // Builds "Meet Assistant YYYY-MM-DD — <título>.txt". The título is your
+    // manual topic if you set one, otherwise a rough guess from the most-
+    // repeated words in the transcript. Computed once per meeting and cached so
+    // repeat saves overwrite the same file instead of piling up duplicates.
     function getMeetingFileName() {
       if (meetingFileName) return meetingFileName;
       const now = meetingStartTime || new Date();
       const dateStr = now.toISOString().slice(0, 10);
-      const timeStr = now.toTimeString().slice(0, 5).replace(':', '-');
-      const topic = context.topic ? ' - ' + context.topic.slice(0, 40).replace(/[/\\:*?"<>|]/g, '') : '';
-      meetingFileName = `${dateStr} ${timeStr}${topic}.txt`;
+      const transcriptText = meetingLog.filter(e => e.type === 'transcript').map(e => e.text).join(' ');
+      const title = sanitizeForFile(context.topic || titleFromTranscript(transcriptText));
+      meetingFileName = `Meet Assistant ${dateStr} — ${title}.txt`;
       return meetingFileName;
     }
 
@@ -1711,6 +1745,7 @@ Use this exact format:
       fc += `Duración:   ${duration}\n`;
       fc += `Guardado:   ${reasonLabel}\n`;
       if (context.topic) fc += `Tema:       ${context.topic}\n`;
+      else fc += `Tema:       ${titleFromTranscript(txLines)} (detectado automáticamente)\n`;
       if (context.profile) fc += `Mi rol:     ${context.profile}\n`;
       if (detectedLang) fc += `Idioma:     ${detectedLang}\n`;
       fc += '\n';
