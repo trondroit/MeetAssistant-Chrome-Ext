@@ -1132,6 +1132,23 @@
     // ── Listen button ────────────────────────────────────────────────────
     $('listen-btn').addEventListener('click', () => { if (isListening) stopListening(); else startListening(); });
 
+    // ── Auto-start (no need to press "Escuchar") ──────────────────────────
+    // Begin listening on its own as soon as you're actually inside the call.
+    // Only for captions mode (audio mode's getDisplayMedia needs a user
+    // gesture) and only with an API key. Respects config.autoListen (default
+    // on) so it can be turned off later. After a manual Detener it does NOT
+    // auto-restart — the polling chain ends once listening begins.
+    let autoStartTries = 0;
+    function maybeAutoStart() {
+      if (config.autoListen === false) return;
+      if (!config.openaiKey || isListening || captureMode !== 'captions') return;
+      // On Meet, wait until the in-call toolbar (the CC button) exists — that
+      // means we've joined, not sitting in the green-room/pre-join screen.
+      if (!IS_MEET || findMeetCaptionsToggleButton()) { startListening(); return; }
+      if (autoStartTries++ < 90) setTimeout(maybeAutoStart, 2000); // keep trying ~3 min
+    }
+    maybeAutoStart();
+
     async function startListening() {
       if (captureMode === 'captions') {
         isListening = true;
