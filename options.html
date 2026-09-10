@@ -196,6 +196,24 @@
       <span class="slider"></span>
     </label>
   </div>
+  <div class="toggle-row">
+    <div>
+      <div class="toggle-label">Empezar a escuchar automáticamente</div>
+      <div class="toggle-desc">Al entrar a la reunión (Google Meet, modo Subtítulos) arranca solo, sin pulsar "Escuchar"</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="auto-listen" checked />
+      <span class="slider"></span>
+    </label>
+  </div>
+  <div class="field" style="margin-top:14px">
+    <label>Idioma de los subtítulos de Meet (por defecto)</label>
+    <select id="caplang-sel">
+      <option value="es">🇪🇸 Español</option>
+      <option value="en">🇺🇸 English</option>
+    </select>
+    <p class="hint">Al empezar a escuchar en Google Meet, la extensión cambia el idioma de los subtítulos de Meet a este idioma automáticamente.</p>
+  </div>
 </div>
 
 <button class="save-btn" id="save-btn">💾 Guardar configuración</button>
