@@ -623,6 +623,8 @@
     let captionLangApplied = false; // apply it at most once per listen session
     const CAPTION_LANG_NAMES = { es: ['Español', 'Spanish'], en: ['English', 'Inglés'] };
 
+    const delay = ms => new Promise(r => setTimeout(r, ms));
+
     function waitForEl(finder, timeout = 4000, interval = 150) {
       return new Promise(resolve => {
         const start = Date.now();
@@ -646,54 +648,92 @@
       }) || null;
     }
 
+    // Close Meet's settings dialog no matter what state it's in, so the
+    // automation never leaves that window sitting open on screen.
+    function closeMeetDialog() {
+      try {
+        const closeBtn = findByText('button[aria-label], [role="button"][aria-label]', ['Close', 'Cerrar']);
+        if (closeBtn) { closeBtn.click(); return; }
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, which: 27, bubbles: true }));
+      } catch (_) {}
+    }
+
     async function setMeetCaptionsLanguage(lang) {
       const names = CAPTION_LANG_NAMES[lang];
       if (!names) return false;
-
-      // 1. Open Meet's Settings dialog — either a direct button or nested in
-      //    the "More options" (⋮) menu depending on the layout.
-      let settingsBtn = findByText('button[aria-label], [role="button"][aria-label]', ['Settings', 'Configuración', 'Ajustes']);
-      if (!settingsBtn) {
-        const moreBtn = findByText('button[aria-label], [role="button"][aria-label]', ['More options', 'Más opciones']);
-        if (moreBtn) {
-          moreBtn.click();
-          settingsBtn = await waitForEl(() => findByText('[role="menuitem"], button, [role="button"]', ['Settings', 'Configuración', 'Ajustes']));
+      let opened = false;
+      try {
+        // 1. Open Meet's Settings dialog — direct button or nested in the
+        //    "More options" (⋮) menu depending on the layout.
+        let settingsBtn = findByText('button[aria-label], [role="button"][aria-label]', ['Settings', 'Configuración', 'Ajustes']);
+        if (!settingsBtn) {
+          const moreBtn = findByText('button[aria-label], [role="button"][aria-label]', ['More options', 'Más opciones']);
+          if (moreBtn) {
+            moreBtn.click();
+            settingsBtn = await waitForEl(() => findByText('[role="menuitem"], button, [role="button"]', ['Settings', 'Configuración', 'Ajustes']));
+          }
         }
-      }
-      if (!settingsBtn) return false;
-      settingsBtn.click();
+        if (!settingsBtn) return false;
+        settingsBtn.click();
+        opened = true;
 
-      // 2. Open the Captions tab inside the dialog.
-      const captionsTab = await waitForEl(() => findByText('[role="tab"], [role="option"], button, li', ['Captions', 'Subtítulos']));
-      if (captionsTab) captionsTab.click();
+        const dialog = await waitForEl(() => document.querySelector('[role="dialog"]'));
+        const scope = dialog || document;
 
-      // 3. Find the language dropdown. Meet renders a custom dropdown showing
-      //    the current language as its label (native <select> as a fallback).
-      const dropdown = await waitForEl(() => {
-        const dialog = document.querySelector('[role="dialog"]');
-        const nativeSel = (dialog || document).querySelector('select');
-        if (nativeSel) return nativeSel;
-        return findByText('[role="combobox"], [role="button"], [role="listbox"]',
-          ['English', 'Español', 'Spanish', 'Inglés', 'idioma', 'language'], dialog || document);
-      });
-      if (!dropdown) return false;
+        // 2. Open the "Subtítulos" section. Target the left-nav item precisely
+        //    (a tab/listitem whose whole label is just "Subtítulos"/"Captions"),
+        //    not the "Habilitar subtítulos" radio in the panel.
+        const tab = await waitForEl(() => {
+          return Array.from(scope.querySelectorAll('[role="tab"], [role="listitem"], [role="option"], li, button'))
+            .find(el => {
+              if (host.contains(el)) return false;
+              const t = (el.textContent || '').trim().toLowerCase();
+              return t === 'subtítulos' || t === 'subtitulos' || t === 'captions';
+            }) || null;
+        }, 2500);
+        if (tab) { tab.click(); await delay(400); }
 
-      if (dropdown.tagName === 'SELECT') {
-        const opt = Array.from(dropdown.options).find(o => names.some(n => (o.textContent || '').toLowerCase().includes(n.toLowerCase())));
-        if (!opt) return false;
-        dropdown.value = opt.value;
-        dropdown.dispatchEvent(new Event('change', { bubbles: true }));
-      } else {
+        // 3. The caption language combobox ("Idioma de la reunión"). Prefer a
+        //    native <select>; otherwise the first combobox in the dialog.
+        const dropdown = await waitForEl(() => {
+          const nativeSel = scope.querySelector('select');
+          if (nativeSel) return nativeSel;
+          return scope.querySelector('[role="combobox"]') ||
+            findByText('[role="button"], [role="listbox"]',
+              ['English', 'Español', 'Spanish', 'Inglés', 'idioma', 'language'], scope);
+        });
+        if (!dropdown) return false;
+
+        if (dropdown.tagName === 'SELECT') {
+          const opt = Array.from(dropdown.options).find(o => names.some(n => (o.textContent || '').toLowerCase().includes(n.toLowerCase())));
+          if (!opt) return false;
+          dropdown.value = opt.value;
+          dropdown.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        }
+
+        // Custom combobox: open it, then pick the matching language option.
         dropdown.click();
+        // Some Meet builds show a search box inside the language list — type to
+        // filter down to the target language first.
+        const search = await waitForEl(() => scope.querySelector('input[type="text"], input:not([type])') ||
+          document.querySelector('[role="dialog"] input, [role="listbox"] input'), 600);
+        if (search) {
+          search.focus();
+          search.value = names[0];
+          search.dispatchEvent(new Event('input', { bubbles: true }));
+        }
         const option = await waitForEl(() => findByText('[role="option"], [role="menuitemradio"], [role="menuitem"], li', names));
         if (!option) return false;
         option.click();
+        return true;
+      } catch (_) {
+        return false;
+      } finally {
+        // Always close the dialog we opened, even on failure, so it doesn't
+        // linger on screen.
+        if (opened) { await delay(250); closeMeetDialog(); }
       }
-
-      // 4. Close the settings dialog.
-      const closeBtn = findByText('button[aria-label], [role="button"][aria-label]', ['Close', 'Cerrar']);
-      if (closeBtn) closeBtn.click();
-      return true;
     }
 
     function setCaptionsLangButtons(lang, pending) {
@@ -712,8 +752,10 @@
       $('caplang-en').textContent = '🇺🇸 English';
       if (ok) {
         meetCaptionsLang = lang;
+        captionLangApplied = true;
+        config.meetCaptionsLangApplied = lang;
         setCaptionsLangButtons(lang, false);
-        saveConfig({ meetCaptionsLang: lang });
+        saveConfig({ meetCaptionsLang: lang, meetCaptionsLangApplied: lang });
         setStatus(lang === 'es' ? 'Subtítulos de Meet en Español ✓' : 'Meet captions set to English ✓');
       } else {
         setCaptionsLangButtons(meetCaptionsLang, false);
@@ -1130,10 +1172,17 @@
         lockCaptionsToggleButton(true);
         $('capture-hint').style.display = 'none';
         setStatus('Escuchando los subtítulos de la reunión...');
-        // Set Meet's caption language (Spanish by default) once per session.
-        if (IS_MEET && meetCaptionsLang && !captionLangApplied) {
+        // Set Meet's caption language (Spanish by default) ONCE, ever — not on
+        // every meeting. Meet remembers the language across meetings, so once
+        // we've applied it we never reopen the settings dialog again (that was
+        // the window popping up every time). We mark it applied up front so a
+        // failed attempt still won't reopen next meeting; the manual ES/EN
+        // buttons stay as the recourse.
+        if (IS_MEET && meetCaptionsLang && !captionLangApplied && config.meetCaptionsLangApplied !== meetCaptionsLang) {
           captionLangApplied = true;
-          setTimeout(() => { if (isListening) applyCaptionsLanguage(meetCaptionsLang); }, 1200);
+          config.meetCaptionsLangApplied = meetCaptionsLang;
+          saveConfig({ meetCaptionsLangApplied: meetCaptionsLang });
+          setTimeout(() => { if (isListening) applyCaptionsLanguage(meetCaptionsLang); }, 1500);
         }
         captionsPollTimer = setTimeout(recheckCaptionsRegion, 2000);
       }, 1500);
